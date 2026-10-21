@@ -19,8 +19,9 @@ services:
     cap_drop:
       - ALL
     # Limite di memoria: l'import EFP e la lettura degli EPUB grandi possono
-    # essere pesanti, 1 GB evita che un picco saturi il server.
-    mem_limit: 1g
+    # essere pesanti (un EPUB da 120 MB arriva a circa 420 MB). 2 GB bastano per
+    # file fino a MAX_UPLOAD_MB=300 ed evitano che un picco saturi il server.
+    mem_limit: ${MEM_LIMIT:-2g}
     environment:
       NODE_ENV: production
       # nginx sull'host raggiunge il container dal gateway della rete bridge
@@ -39,6 +40,8 @@ services:
       CORS_ORIGINS: ${CORS_ORIGINS:-}
       # Chiave opzionale per Google Books (rimuove il limite di richieste).
       GOOGLE_BOOKS_API_KEY: ${GOOGLE_BOOKS_API_KEY:-}
+      # Dimensione massima di un file caricato dal browser (MB).
+      MAX_UPLOAD_MB: ${MAX_UPLOAD_MB:-300}
       LOG_LEVEL: ${LOG_LEVEL:-info}
     volumes:
       # La libreria (epub, copertine, book.json) vive qui. LIBRARY_PATH la

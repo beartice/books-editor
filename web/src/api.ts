@@ -44,6 +44,21 @@ function notifyUnauthorized(path: string, status: number, body?: unknown): void 
   if (status === 403 && (body as { setupRequired?: boolean } | undefined)?.setupRequired) setupRequiredHandler?.();
 }
 
+/** Limite di upload dichiarato dal server (noto dopo aver letto le impostazioni). */
+let knownMaxUploadMb: number | null = null;
+
+/** Messaggio per un 413, sia che arrivi dall'app (JSON) sia da nginx (HTML). */
+export function tooLargeMessage(): string {
+  return knownMaxUploadMb
+    ? `File troppo grande per il server (limite ${knownMaxUploadMb} MB)`
+    : 'File troppo grande per il server';
+}
+
+function errorMessage(status: number, body: { error?: string }): string {
+  if (status === 413) return tooLargeMessage();
+  return body.error ?? `Errore ${status}`;
+}
+
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const headers: Record<string, string> = { ...(init.headers as Record<string, string>) };
   const isFormData = init.body instanceof FormData;
@@ -57,7 +72,7 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   if (!response.ok) {
     const body = await response.json().catch(() => ({}) as { error?: string });
     notifyUnauthorized(path, response.status, body);
-    throw new ApiError(body.error ?? `Errore ${response.status}`, response.status, body);
+    throw new ApiError(errorMessage(response.status, body), response.status, body);
   }
   return (await response.json()) as T;
 }
@@ -75,7 +90,7 @@ async function requestBlob(
   if (!response.ok) {
     const body = await response.json().catch(() => ({}) as { error?: string });
     notifyUnauthorized(path, response.status, body);
-    throw new ApiError(body.error ?? `Errore ${response.status}`, response.status, body);
+    throw new ApiError(errorMessage(response.status, body), response.status, body);
   }
   const disposition = response.headers.get('Content-Disposition') ?? '';
   const encoded = /filename\*=UTF-8''([^;]+)/i.exec(disposition)?.[1];
@@ -165,7 +180,11 @@ export const api = {
       body: JSON.stringify({ username, password }),
     }),
   logout: () => request<{ ok: boolean }>('/auth/logout', { method: 'POST', body: '{}' }),
-  settings: () => request<AppSettings>('/settings'),
+  settings: async () => {
+    const settings = await request<AppSettings>('/settings');
+    knownMaxUploadMb = settings.maxUploadMb ?? null;
+    return settings;
+  },
   updateSettings: (patch: Partial<AppSettings>) =>
     request<AppSettings>('/settings', { method: 'PUT', body: JSON.stringify(patch) }),
 

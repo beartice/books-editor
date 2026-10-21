@@ -266,6 +266,8 @@ export interface AppSettings {
   libraryRoot: string;
   /** Sola lettura: true se la cartella e' bloccata dalla variabile LIBRARY_ROOT. */
   libraryRootLocked?: boolean;
+  /** Sola lettura: dimensione massima di un file caricato dal browser (MAX_UPLOAD_MB). */
+  maxUploadMb?: number;
   libraryName: string;
   /** Lingua di default per i metadati cercati online. */
   searchLanguage: string;

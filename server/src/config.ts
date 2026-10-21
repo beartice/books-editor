@@ -42,6 +42,13 @@ export const DEFAULT_LIBRARY_ROOT = envPath('LIBRARY_ROOT', path.join(PROJECT_RO
 export const PORT = Number(process.env.PORT ?? 8787);
 export const HOST = process.env.HOST ?? '0.0.0.0';
 
+/** Dimensione massima di un file caricato dal browser, in MB (1-4096, default 300). */
+export const MAX_UPLOAD_MB = (() => {
+  const value = Number(process.env.MAX_UPLOAD_MB);
+  return Number.isInteger(value) && value >= 1 && value <= 4096 ? value : 300;
+})();
+export const MAX_UPLOAD_BYTES = MAX_UPLOAD_MB * 1024 * 1024;
+
 export const IS_PRODUCTION = process.env.NODE_ENV === 'production';
 
 /** Se LIBRARY_ROOT e' definita nell'ambiente, la cartella della libreria non e' modificabile. */

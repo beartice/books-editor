@@ -441,6 +441,7 @@ l'app non vede l'IP reale ne' l'HTTPS.
 | `IMPORT_ROOTS` | — | Cartelle assolute (separate da virgola) consentite per «Importa da percorso» |
 | `CORS_ORIGINS` | — | Lascia vuota (l'app e' same-origin) |
 | `GOOGLE_BOOKS_API_KEY` | — | Chiave Google Books (facoltativa; alternativa: impostarla dall'interfaccia) |
+| `MAX_UPLOAD_MB` | `300` | Dimensione massima (1-4096 MB) dei file caricati dal browser. Anche il reverse proxy deve accettarla: in nginx `client_max_body_size` un po' sopra questo valore (es. `310m`), altrimenti risponde 413 |
 | `LOG_LEVEL` | `info` | Livello di log |
 
 ### Google Books: errore HTTP 429

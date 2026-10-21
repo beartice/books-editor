@@ -1,8 +1,17 @@
 import path from 'node:path';
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
-import type { FastifyInstance } from 'fastify';
-import { DEFAULT_LIBRARY_ROOT, IMPORT_ROOTS, IS_PRODUCTION, LIBRARY_ROOT_LOCKED, ensureDir } from './config.js';
+import { pipeline } from 'node:stream/promises';
+import type { Readable } from 'node:stream';
+import type { FastifyInstance, FastifyReply } from 'fastify';
+import {
+  DEFAULT_LIBRARY_ROOT,
+  IMPORT_ROOTS,
+  IS_PRODUCTION,
+  LIBRARY_ROOT_LOCKED,
+  MAX_UPLOAD_MB,
+  ensureDir,
+} from './config.js';
 import { prepareLibraryRoot } from './libraryRoot.js';
 import { loadIndex, loadSettings, saveIndex, saveSettings, toSummary } from './store.js';
 import {
@@ -137,6 +146,7 @@ function publicSettings(settings: AppSettings): AppSettings {
   return {
     ...rest,
     libraryRootLocked: LIBRARY_ROOT_LOCKED,
+    maxUploadMb: MAX_UPLOAD_MB,
     jellyfinApiKeySet: Boolean(jellyfinApiKey?.trim()),
     googleBooksApiKeySet: Boolean(googleBooksApiKey?.trim()),
     googleBooksApiKeyEnvSet: Boolean(process.env.GOOGLE_BOOKS_API_KEY?.trim()),
@@ -185,15 +195,61 @@ function duplicateReply(duplicate: DuplicateMatch) {
   };
 }
 
-/** Salva un file caricato dal browser in `.uploads` e ne restituisce il percorso. */
-async function stageUpload(filename: string | undefined, data: Buffer): Promise<string> {
+/** Prepara il percorso temporaneo in `.uploads` per un file caricato dal browser. */
+async function stagingPath(filename: string | undefined): Promise<string> {
   const settings = await loadSettings();
   const staging = path.join(settings.libraryRoot, '.uploads');
   await fsp.mkdir(staging, { recursive: true });
   const safeName = path.basename(filename ?? 'opera').replace(/[\\/:*?"<>|]/g, '-');
-  const tempPath = path.join(staging, `${Date.now()}-${safeName}`);
-  await fsp.writeFile(tempPath, data);
+  return path.join(staging, `${Date.now()}-${safeName}`);
+}
+
+/** Errore di upload oltre il limite `MAX_UPLOAD_MB`. */
+class UploadTooLargeError extends Error {
+  constructor() {
+    super(`File troppo grande: il limite e' ${MAX_UPLOAD_MB} MB`);
+  }
+}
+
+/**
+ * Salva un file caricato in `.uploads` e ne restituisce il percorso: scrive il flusso su disco senza tenerlo in memoria.
+ * Se il file supera il limite cancella il temporaneo e lancia `UploadTooLargeError`.
+ */
+async function stageUploadStream(
+  filename: string | undefined,
+  stream: Readable & { truncated?: boolean },
+): Promise<string> {
+  const tempPath = await stagingPath(filename);
+  try {
+    await pipeline(stream, fs.createWriteStream(tempPath));
+  } catch (error) {
+    await fsp.rm(tempPath, { force: true });
+    if ((error as { code?: string }).code === 'FST_REQ_FILE_TOO_LARGE') throw new UploadTooLargeError();
+    throw error;
+  }
+  if (stream.truncated) {
+    await fsp.rm(tempPath, { force: true });
+    throw new UploadTooLargeError();
+  }
   return tempPath;
+}
+
+/** Salva l'upload in streaming; in caso di errore risponde (413 se troppo grande) e ritorna null. */
+async function stageUploadOrReply(
+  reply: FastifyReply,
+  filename: string | undefined,
+  stream: Readable & { truncated?: boolean },
+): Promise<string | null> {
+  try {
+    return await stageUploadStream(filename, stream);
+  } catch (error) {
+    if (error instanceof UploadTooLargeError) {
+      await reply.code(413).send({ error: error.message });
+      return null;
+    }
+    await reply.code(400).send({ error: (error as Error).message });
+    return null;
+  }
 }
 
 export async function registerApi(app: FastifyInstance): Promise<void> {
@@ -402,7 +458,8 @@ export async function registerApi(app: FastifyInstance): Promise<void> {
     if (!book) return reply.code(404).send({ error: 'Libro non trovato' });
     const file = await request.file();
     if (!file) return reply.code(400).send({ error: 'Nessun file ricevuto' });
-    const tempPath = await stageUpload(file.filename, await file.toBuffer());
+    const tempPath = await stageUploadOrReply(reply, file.filename, file.file);
+    if (!tempPath) return reply;
     try {
       const same = await findIdenticalFile(book, tempPath);
       if (same) {
@@ -880,7 +937,8 @@ export async function registerApi(app: FastifyInstance): Promise<void> {
     async (request, reply) => {
       const file = await request.file();
       if (!file) return reply.code(400).send({ error: 'Nessun file ricevuto' });
-      const tempPath = await stageUpload(file.filename, await file.toBuffer());
+      const tempPath = await stageUploadOrReply(reply, file.filename, file.file);
+      if (!tempPath) return reply;
       try {
         const attachTo = request.query?.attachTo;
         if (attachTo) {

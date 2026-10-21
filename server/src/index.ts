@@ -4,7 +4,7 @@ import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import multipart from '@fastify/multipart';
 import fastifyStatic from '@fastify/static';
-import { CORS_ORIGINS, DATA_DIR, IS_PRODUCTION, PORT, HOST, TRUST_PROXY, WEB_DIST, ensureDir } from './config.js';
+import { CORS_ORIGINS, DATA_DIR, IS_PRODUCTION, MAX_UPLOAD_BYTES, PORT, HOST, TRUST_PROXY, WEB_DIST, ensureDir } from './config.js';
 import { checkAuthConfig, registerAuth } from './auth.js';
 import { registerApi } from './routes.js';
 import { loadSettings } from './store.js';
@@ -38,7 +38,7 @@ const app = Fastify({
 if (CORS_ORIGINS.length > 0) {
   await app.register(cors, { origin: CORS_ORIGINS, credentials: true });
 }
-await app.register(multipart, { limits: { fileSize: 30 * 1024 * 1024 } });
+await app.register(multipart, { limits: { fileSize: MAX_UPLOAD_BYTES } });
 
 /* Intestazioni di sicurezza. HSTS lo imposta nginx. */
 const CSP = [

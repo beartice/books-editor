@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { api, ApiError } from '../api';
+import { api, ApiError, tooLargeMessage } from '../api';
 import type { JellyfinImportState, JellyfinLibrary, JellyfinPreview } from '../api';
 import type { BookMeta, BookSummary } from '@shared/types';
 import { useStore } from '../store';
@@ -195,6 +195,11 @@ export default function ImportDialog({ onClose }: Props) {
   };
 
   const upload = async (file: File) => {
+    // Se il limite del server e' noto, si evita di caricare un file che verrebbe rifiutato.
+    if (settings?.maxUploadMb && file.size > settings.maxUploadMb * 1024 * 1024) {
+      toast(tooLargeMessage(), 'error');
+      return;
+    }
     await runImport((options) => api.uploadFile(file, options));
   };
 
