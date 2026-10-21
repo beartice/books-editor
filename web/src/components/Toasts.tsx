@@ -35,7 +35,7 @@ export default function Toasts() {
                     onClick={() => answerToast(toast.id, action.value)}
                     className={cn(
                       action.primary ? 'btn-primary' : 'btn-ghost',
-                      'text-[12px] px-2.5 py-1',
+                      'px-2.5 py-2 text-[12px] sm:py-1',
                     )}
                   >
                     {action.label}

@@ -188,7 +188,7 @@ export default function Sidebar({
           </div>
           <button
             onClick={onClose}
-            className="btn-subtle ml-auto h-8 w-8 shrink-0 px-0 lg:hidden"
+            className="btn-subtle ml-auto h-10 w-10 shrink-0 px-0 lg:hidden"
             aria-label="Chiudi filtri"
           >
             <IconClose className="h-4 w-4" />

@@ -35,8 +35,8 @@ export default function LoginPage() {
   };
 
   return (
-    <div className="flex h-full items-center justify-center bg-[#ede9de] px-4">
-      <form onSubmit={submit} className="panel w-full max-w-sm p-7">
+    <div className="flex h-full overflow-y-auto bg-[#ede9de] px-4 py-4">
+      <form onSubmit={submit} className="panel m-auto w-full max-w-sm p-5 sm:p-7">
         <div className="mb-6 flex items-center gap-3">
           <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-accent-600 text-white">
             <IconBook className="h-5 w-5" />

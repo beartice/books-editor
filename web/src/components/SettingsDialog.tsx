@@ -128,12 +128,12 @@ export default function SettingsDialog({ onClose }: Props) {
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-0 sm:p-4">
       <div className="absolute inset-0 bg-ink-950/25 backdrop-blur-[2px] animate-fade-in" onClick={onClose} />
-      <div className="relative flex max-h-[90vh] w-full max-w-lg animate-scale-in flex-col overflow-hidden rounded-[24px] border border-black/[0.07] bg-white shadow-panel">
+      <div className="relative flex h-[100dvh] w-full max-w-lg animate-scale-in flex-col overflow-hidden border-black/[0.07] bg-white shadow-panel sm:h-auto sm:max-h-[90vh] sm:rounded-[24px] sm:border">
         <div className="flex items-center justify-between border-b border-black/[0.06] px-5 py-4 sm:px-6">
           <h2 className="text-lg font-semibold text-ink-50">Impostazioni</h2>
-          <button onClick={onClose} className="btn-subtle px-2" aria-label="Chiudi impostazioni">
+          <button onClick={onClose} className="btn-subtle h-10 w-10 px-0 sm:h-auto sm:w-auto sm:px-2" aria-label="Chiudi impostazioni">
             <IconClose />
           </button>
         </div>

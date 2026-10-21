@@ -1,6 +1,9 @@
 /** @type {import('tailwindcss').Config} */
 export default {
   darkMode: 'class',
+  /* hover: e group-hover: solo dove esiste un vero puntatore con hover:
+     su iOS Safari un :hover che mostra contenuto fa consumare il primo tocco. */
+  future: { hoverOnlyWhenSupported: true },
   content: ['./index.html', './src/**/*.{ts,tsx}'],
   theme: {
     extend: {

@@ -13,6 +13,19 @@
     height: 100%;
   }
 
+  html {
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  /* Niente attesa del doppio tocco sui controlli. */
+  button,
+  a,
+  [role='button'],
+  label,
+  summary {
+    touch-action: manipulation;
+  }
+
   body {
     @apply bg-[#ede9de] text-ink-100 font-sans antialiased;
     background-image:
@@ -37,10 +50,12 @@
     border: 3px solid transparent;
     background-clip: padding-box;
   }
-  *::-webkit-scrollbar-thumb:hover {
-    @apply bg-ink-500;
-    border: 3px solid transparent;
-    background-clip: padding-box;
+  @media (hover: hover) and (pointer: fine) {
+    *::-webkit-scrollbar-thumb:hover {
+      @apply bg-ink-500;
+      border: 3px solid transparent;
+      background-clip: padding-box;
+    }
   }
 
   input,
@@ -56,6 +71,26 @@
 
   :focus-visible {
     @apply outline-none ring-2 ring-accent-500/30;
+  }
+}
+
+/* iOS ingrandisce la pagina quando si tocca un campo con font < 16px.
+   !important perche' le classi di utilita' (text-sm, .field-input) hanno
+   specificita' maggiore del selettore di elemento. */
+@media (pointer: coarse) {
+  input:not([type='checkbox']):not([type='radio']):not([type='range']),
+  select,
+  textarea {
+    font-size: max(16px, 1em) !important;
+  }
+}
+
+@layer utilities {
+  .no-scrollbar {
+    scrollbar-width: none;
+  }
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
   }
 }
 

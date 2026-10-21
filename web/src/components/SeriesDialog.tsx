@@ -308,7 +308,7 @@ export default function SeriesDialog({ onClose, initialSeries }: Props) {
         role="dialog"
         aria-modal="true"
         aria-labelledby="series-dialog-title"
-        className="relative flex h-full w-full max-w-6xl animate-fade-in flex-col overflow-hidden border border-black/[0.07] bg-white shadow-panel sm:h-[92vh] sm:max-h-[920px] sm:rounded-[30px]"
+        className="relative flex h-[100dvh] w-full max-w-6xl animate-fade-in flex-col overflow-hidden border border-black/[0.07] bg-white shadow-panel sm:h-[92vh] sm:max-h-[920px] sm:rounded-[30px]"
       >
         <header className="flex shrink-0 items-start gap-4 border-b border-black/[0.06] px-4 py-4 sm:px-6">
           <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-[14px] bg-coral-500 text-white shadow-sm">
@@ -326,7 +326,7 @@ export default function SeriesDialog({ onClose, initialSeries }: Props) {
               Volumi e opere posseduti, mancanti e date di pubblicazione disponibili.
             </p>
           </div>
-          <button onClick={onClose} className="btn-subtle px-2" aria-label="Chiudi serie">
+          <button onClick={onClose} className="btn-subtle h-10 w-10 shrink-0 px-0 sm:h-auto sm:w-auto sm:px-2" aria-label="Chiudi serie">
             <IconClose />
           </button>
         </header>

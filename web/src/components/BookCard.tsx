@@ -17,7 +17,7 @@ export default function BookCard({ book }: { book: BookSummary }) {
     <button
       onClick={() => select(book.id)}
       className={cn(
-        'group relative flex w-full flex-col text-left transition',
+        'group relative flex w-full flex-col text-left transition active:scale-[0.98] active:opacity-80',
         selectedId === book.id && 'is-selected',
       )}
       aria-label={`Apri ${book.title || 'opera senza titolo'}`}

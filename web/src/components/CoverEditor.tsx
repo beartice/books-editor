@@ -957,7 +957,7 @@ export default function CoverEditor({ meta, onClose }: Props) {
   };
 
   return createPortal(
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-0 sm:p-4">
       <div
         className="absolute inset-0 animate-fade-in bg-ink-950/35 backdrop-blur-[3px]"
         onClick={() => {
@@ -969,7 +969,7 @@ export default function CoverEditor({ meta, onClose }: Props) {
         role="dialog"
         aria-modal="true"
         aria-labelledby="cover-editor-title"
-        className="relative flex h-[94vh] max-h-[900px] w-full max-w-6xl animate-scale-in flex-col overflow-hidden rounded-2xl border border-black/[0.07] bg-white/95 shadow-panel backdrop-blur-xl"
+        className="relative flex h-[100dvh] w-full max-w-6xl animate-scale-in flex-col overflow-hidden border-black/[0.07] bg-white/95 shadow-panel backdrop-blur-xl sm:h-[94vh] sm:max-h-[900px] sm:rounded-2xl sm:border"
       >
         <header className="flex items-center justify-between gap-4 border-b border-black/[0.06] px-4 py-3 sm:px-5">
           <div className="flex min-w-0 items-center gap-3">
@@ -988,7 +988,7 @@ export default function CoverEditor({ meta, onClose }: Props) {
           <button
             type="button"
             onClick={onClose}
-            className="btn-subtle shrink-0 px-2"
+            className="btn-subtle h-10 w-10 shrink-0 px-0 sm:h-auto sm:w-auto sm:px-2"
             aria-label="Chiudi editor copertina"
             disabled={busy !== null || imageBusy}
           >

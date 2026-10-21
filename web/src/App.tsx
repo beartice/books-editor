@@ -138,12 +138,12 @@ export default function App() {
               visibleCount={visible.length}
             />
 
-            <div className="relative -mt-7 rounded-t-[32px] bg-white px-4 pb-12 pt-8 sm:px-7 lg:px-10 lg:pb-16 lg:pt-9">
+            <div className="relative -mt-7 rounded-t-[32px] bg-white px-4 pb-12 pt-5 sm:px-7 sm:pt-8 lg:px-10 lg:pb-16 lg:pt-9">
               <section id="library" className="scroll-mt-6">
-                <div className="flex flex-wrap items-end justify-between gap-4">
+                <div className="flex items-end justify-between gap-3 sm:flex-wrap sm:gap-4">
                   <div>
-                    <p className="eyebrow">La tua raccolta</p>
-                    <h2 className="mt-1 text-[26px] font-semibold tracking-[-0.03em] text-ink-50 sm:text-[30px]">
+                    <p className="eyebrow hidden sm:block">La tua raccolta</p>
+                    <h2 className="mt-1 text-[22px] font-semibold tracking-[-0.03em] text-ink-50 sm:text-[30px]">
                       La tua libreria
                     </h2>
                     <p className="mt-1 text-sm text-ink-500">
@@ -166,7 +166,7 @@ export default function App() {
                   </div>
                 </div>
 
-                <div className="mt-7">
+                <div className="mt-4 sm:mt-7">
                   {loading ? (
                     <SkeletonGrid />
                   ) : books.length === 0 ? (

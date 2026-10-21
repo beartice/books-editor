@@ -432,7 +432,7 @@ export default function DetailPanel({
         onClick={() => select(null)}
       />
 
-      <aside className="relative flex h-full w-full max-w-xl animate-slide-in flex-col border-l border-black/[0.07] bg-white shadow-panel">
+      <aside className="relative flex h-[100dvh] w-full max-w-xl animate-slide-in flex-col border-l border-black/[0.07] bg-white shadow-panel">
         <header className="flex items-start gap-4 border-b border-black/[0.06] p-4">
           <BookCover
             id={meta.id}
@@ -477,7 +477,7 @@ export default function DetailPanel({
                       <button
                         onClick={() => setDownloadMenu((open) => !open)}
                         disabled={downloading !== null}
-                        className="btn-primary px-2.5 py-1 text-[12px] disabled:opacity-60"
+                        className="btn-primary px-2.5 py-2 text-[12px] sm:py-1 disabled:opacity-60"
                         title="Scegli la lingua da scaricare"
                       >
                         <IconDownload
@@ -510,7 +510,7 @@ export default function DetailPanel({
                       disabled={downloading !== null}
                       className={cn(
                         index === 0 ? 'btn-primary' : 'btn-ghost',
-                        'px-2.5 py-1 text-[12px] disabled:opacity-60',
+                        'px-2.5 py-2 text-[12px] sm:py-1 disabled:opacity-60',
                       )}
                       title={`Scarica ${file}`}
                     >
@@ -525,7 +525,7 @@ export default function DetailPanel({
                   <button
                     onClick={() => void handleWriteEpub()}
                     disabled={writing}
-                    className="btn-ghost px-2.5 py-1 text-[12px] disabled:opacity-60"
+                    className="btn-ghost px-2.5 py-2 text-[12px] sm:py-1 disabled:opacity-60"
                     title={
                       hasEditions
                         ? `Sovrascrive copertina e metadati dentro il file EPUB della lingua principale (${languageLabel(meta.language)}) con quelli della scheda: le altre lingue non vengono toccate`
@@ -539,7 +539,7 @@ export default function DetailPanel({
                 {appleStatus?.available && (
                   <button
                     onClick={() => setAppleDialog(true)}
-                    className="btn-ghost px-2.5 py-1 text-[12px]"
+                    className="btn-ghost px-2.5 py-2 text-[12px] sm:py-1"
                     title="Scrive copertina, titolo e autore nella copia del libro che Apple Books ha gia'"
                   >
                     <IconBook className="h-3.5 w-3.5" />
@@ -550,7 +550,7 @@ export default function DetailPanel({
             )}
           </div>
           <div className="flex shrink-0 flex-col gap-1.5">
-            <button onClick={() => select(null)} className="btn-subtle px-2" title="Chiudi">
+            <button onClick={() => select(null)} className="btn-subtle h-10 w-10 px-0 sm:h-auto sm:w-auto sm:px-2" title="Chiudi">
               <IconClose />
             </button>
             <button
@@ -564,7 +564,7 @@ export default function DetailPanel({
                   useStore.getState().toast((error as Error).message, 'error');
                 }
               }}
-              className="btn-subtle px-2"
+              className="btn-subtle h-10 w-10 px-0 sm:h-auto sm:w-auto sm:px-2"
               title="Rileggi i metadati dal file"
             >
               <IconRefresh className={busy ? 'animate-spin' : ''} />
@@ -572,7 +572,7 @@ export default function DetailPanel({
           </div>
         </header>
 
-        <nav className="flex gap-1 border-b border-black/[0.06] px-4 py-2">
+        <nav className="no-scrollbar flex gap-1 overflow-x-auto border-b border-black/[0.06] px-4 py-2">
           {(
             [
               ['details', 'Dettagli'],
@@ -590,7 +590,7 @@ export default function DetailPanel({
               key={key}
               onClick={() => setDetailTab(key)}
               className={cn(
-                'rounded-lg px-3 py-1.5 text-[13px] font-medium transition',
+                'shrink-0 whitespace-nowrap rounded-lg px-3 py-2.5 text-[13px] font-medium transition sm:py-1.5',
                 detailTab === key
                   ? 'bg-accent-600 text-white'
                   : 'text-ink-300 hover:bg-black/[0.04] hover:text-ink-100',

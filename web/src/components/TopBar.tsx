@@ -81,7 +81,7 @@ export default function TopBar({
   };
 
   return (
-    <header className="relative overflow-hidden bg-[#e9e4d6] px-4 pb-20 pt-4 sm:px-7 lg:px-10 lg:pb-24 lg:pt-6">
+    <header className="relative overflow-hidden bg-[#e9e4d6] px-4 pb-12 pt-3 sm:px-7 sm:pb-20 sm:pt-4 lg:px-10 lg:pb-24 lg:pt-6">
       <div className="pointer-events-none absolute -right-24 -top-24 h-96 w-96 rounded-full bg-white/35 blur-3xl" />
       <div className="pointer-events-none absolute right-28 top-36 h-48 w-48 rounded-full border border-white/40" />
       <div className="pointer-events-none absolute -bottom-28 left-1/3 h-64 w-64 rounded-full bg-[#f7f0e4]/50 blur-3xl" />
@@ -148,16 +148,16 @@ export default function TopBar({
         </div>
       </div>
 
-      <div className="relative mt-8 max-w-[1100px] lg:mt-10">
+      <div className="relative mt-3 max-w-[1100px] sm:mt-8 lg:mt-10">
         <p className="eyebrow text-ink-500">La tua prossima storia</p>
-        <h1 className="mt-1.5 text-[40px] font-semibold leading-none tracking-[-0.045em] text-ink-50 sm:text-[52px] lg:text-[58px]">
+        <h1 className="mt-1 text-[30px] font-semibold leading-none tracking-[-0.045em] text-ink-50 sm:mt-1.5 sm:text-[52px] lg:text-[58px]">
           Scopri
         </h1>
-        <p className="mt-3 max-w-lg text-[13px] leading-relaxed text-ink-400 sm:text-sm">
+        <p className="mt-3 hidden max-w-lg text-[13px] leading-relaxed text-ink-400 sm:block sm:text-sm">
           Cerca, organizza e ritrova ogni storia del tuo archivio personale.
         </p>
 
-        <div className="mt-6 flex flex-col gap-1.5 rounded-[20px] border border-black/[0.04] bg-white p-2 shadow-soft sm:flex-row sm:items-center sm:gap-0">
+        <div className="mt-3 flex flex-col gap-0.5 rounded-[20px] border border-black/[0.04] bg-white p-2 shadow-soft sm:flex-row sm:items-center sm:gap-0">
           <div className="flex items-center gap-2 rounded-xl px-3 py-2 sm:w-[205px] sm:border-r sm:border-black/[0.06]">
             <IconFilter className="h-4 w-4 shrink-0 text-ink-400" />
             <select
@@ -199,14 +199,14 @@ export default function TopBar({
 
           <button
             onClick={submitSearch}
-            className="btn-primary h-11 shrink-0 rounded-[13px] px-5 text-[12px]"
+            className="btn-primary hidden h-11 shrink-0 rounded-[13px] px-5 text-[12px] sm:inline-flex"
           >
             <IconSearch className="h-4 w-4" />
             Cerca
           </button>
         </div>
 
-        <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
+        <div className="mt-3 flex flex-wrap items-center justify-between gap-2 sm:mt-4 sm:gap-3">
           <div className="flex flex-wrap items-center gap-2">
             <span className="rounded-full bg-white/55 px-2.5 py-1 text-[11px] font-medium text-ink-400">
               {visibleCount === 1 ? '1 opera' : `${visibleCount} opere`}

@@ -28,7 +28,7 @@ export default function BookList({ books }: { books: BookSummary[] }) {
               key={book.id}
               onClick={() => select(book.id)}
               className={cn(
-                'cursor-pointer border-t border-black/[0.05] text-[12.5px] transition hover:bg-ink-800/70',
+                'cursor-pointer border-t border-black/[0.05] text-[12.5px] transition hover:bg-ink-800/70 active:bg-ink-800',
                 selectedId === book.id && 'bg-accent-500/[0.07]',
               )}
             >

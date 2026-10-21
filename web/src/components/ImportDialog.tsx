@@ -241,12 +241,12 @@ export default function ImportDialog({ onClose }: Props) {
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-0 sm:p-4">
       <div className="absolute inset-0 bg-ink-950/25 backdrop-blur-[2px] animate-fade-in" onClick={onClose} />
-      <div className="relative max-h-[90vh] w-full max-w-lg animate-scale-in overflow-y-auto rounded-[24px] border border-black/[0.07] bg-white p-5 shadow-panel sm:p-6">
-        <div className="mb-4 flex items-center justify-between">
+      <div className="relative h-[100dvh] w-full max-w-lg animate-scale-in overflow-y-auto border-black/[0.07] bg-white p-5 shadow-panel sm:h-auto sm:max-h-[90vh] sm:rounded-[24px] sm:border sm:p-6">
+        <div className="sticky top-0 z-10 -mx-5 -mt-5 mb-4 flex items-center justify-between bg-white px-5 py-3 sm:static sm:mx-0 sm:mt-0 sm:px-0 sm:py-0">
           <h2 className="text-lg font-semibold text-ink-50">Importa un'opera</h2>
-          <button onClick={onClose} className="btn-subtle px-2">
+          <button onClick={onClose} className="btn-subtle h-10 w-10 px-0 sm:h-auto sm:w-auto sm:px-2" aria-label="Chiudi">
             <IconClose />
           </button>
         </div>
