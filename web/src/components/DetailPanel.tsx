@@ -31,6 +31,7 @@ import {
   IconLink,
   IconFolder,
   IconLayers,
+  IconShare,
   IconBook,
 } from './icons';
 import { FIELD_LABELS, READING_STATUSES } from '@shared/types';
@@ -264,6 +265,12 @@ export default function DetailPanel({
   const [appleStatus, setAppleStatus] = useState<AppleBooksWriteStatus | null>(null);
   const [appleDialog, setAppleDialog] = useState(false);
   const downloadMenuRef = useRef<HTMLDivElement>(null);
+  // «Apri in Libri»: menu delle lingue, file in preparazione, file pronti e file da condividere al prossimo tocco.
+  const [shareMenu, setShareMenu] = useState(false);
+  const [sharing, setSharing] = useState<string | null>(null);
+  const [shareRetry, setShareRetry] = useState<{ key: string; file: string } | null>(null);
+  const shareMenuRef = useRef<HTMLDivElement>(null);
+  const shareCache = useRef(new Map<string, { file: File; original: boolean }>());
   // Aprendo la scheda "Metadati online" la ricerca parte da sola.
   useEffect(() => {
     if (detailTab === 'online' && detail && !lookupAttempted) {
@@ -301,14 +308,18 @@ export default function DetailPanel({
 
   // Menu delle lingue: si chiude con un clic fuori o con Esc (che non chiude il pannello).
   useEffect(() => {
-    if (!downloadMenu) return;
+    if (!downloadMenu && !shareMenu) return;
     const onDown = (event: MouseEvent) => {
-      if (!downloadMenuRef.current?.contains(event.target as Node)) setDownloadMenu(false);
+      const target = event.target as Node;
+      if (downloadMenuRef.current?.contains(target) || shareMenuRef.current?.contains(target)) return;
+      setDownloadMenu(false);
+      setShareMenu(false);
     };
     const onKey = (event: KeyboardEvent) => {
       if (event.key !== 'Escape') return;
       event.stopPropagation();
       setDownloadMenu(false);
+      setShareMenu(false);
     };
     document.addEventListener('mousedown', onDown);
     document.addEventListener('keydown', onKey, true);
@@ -316,7 +327,7 @@ export default function DetailPanel({
       document.removeEventListener('mousedown', onDown);
       document.removeEventListener('keydown', onKey, true);
     };
-  }, [downloadMenu]);
+  }, [downloadMenu, shareMenu]);
 
   if (!detail) return null;
 
@@ -382,6 +393,76 @@ export default function DetailPanel({
     } finally {
       setDownloading(null);
     }
+  };
+
+  // Condivisione (iOS: foglio di sistema -> «Libri»). Su desktop o senza file nella Web Share API non compare.
+  const canShareEpub =
+    typeof navigator !== 'undefined' &&
+    typeof navigator.canShare === 'function' &&
+    typeof window.matchMedia === 'function' &&
+    window.matchMedia('(pointer: coarse)').matches &&
+    (() => {
+      try {
+        return navigator.canShare({ files: [new File([''], 'x.epub', { type: 'application/epub+zip' })] });
+      } catch {
+        return false;
+      }
+    })();
+  const isApple =
+    /iPhone|iPad|iPod/.test(navigator.userAgent) ||
+    (/Macintosh/.test(navigator.userAgent) && navigator.maxTouchPoints > 1);
+  const shareLabel = isApple ? 'Apri in Libri' : 'Condividi EPUB';
+  const shareFiles = (meta.format === 'epub' && meta.sourceFile ? [meta.sourceFile, ...editions.map((e) => e.file)] : [])
+    .filter((file, index, all) => file.toLowerCase().endsWith('.epub') && all.indexOf(file) === index);
+
+  const handleShare = async (file: string) => {
+    const key = `${meta.id}|${file}|${meta.dateModified}`;
+    const title = editions.find((edition) => edition.file === file)?.title || meta.title;
+    // share() deve partire da un gesto recente: se il file e' pronto si condivide subito.
+    const share = async (item: File) => {
+      try {
+        await navigator.share({ files: [item], title });
+        setShareRetry(null);
+      } catch (error) {
+        const name = (error as Error).name;
+        if (name === 'AbortError') {
+          setShareRetry(null);
+        } else if (name === 'NotAllowedError') {
+          // Attivazione scaduta durante il download: il file resta pronto per il tocco successivo.
+          setShareRetry({ key, file });
+        } else {
+          setShareRetry(null);
+          useStore.getState().toast((error as Error).message, 'error');
+        }
+      }
+    };
+    const cached = shareCache.current.get(key);
+    if (cached) {
+      await share(cached.file);
+      return;
+    }
+    setSharing(key);
+    let item: File;
+    try {
+      const { blob, filename, metadata } = await api.downloadBook(
+        meta.id,
+        file === meta.sourceFile ? undefined : file,
+        { meta: true },
+      );
+      item = new File([blob], filename, { type: 'application/epub+zip' });
+      shareCache.current.set(key, { file: item, original: metadata === 'original' });
+      if (metadata === 'original') {
+        useStore
+          .getState()
+          .toast("Inviato il file originale: non e' stato possibile scrivere i metadati della scheda", 'info');
+      }
+    } catch (error) {
+      useStore.getState().toast((error as Error).message, 'error');
+      return;
+    } finally {
+      setSharing(null);
+    }
+    await share(item);
   };
 
   const handleWriteEpub = async () => {
@@ -520,6 +601,58 @@ export default function DetailPanel({
                       {index === 0 ? `Scarica ${fileLabel(file)}` : fileLabel(file)}
                     </button>
                   ),
+                )}
+                {canShareEpub && shareFiles.length > 0 && (
+                  <div ref={shareMenuRef} className="relative">
+                    {(() => {
+                      const multi = hasEditions && shareFiles.length > 1;
+                      // Il file e' gia' pronto ma il foglio non e' partito: serve un nuovo tocco.
+                      const retry =
+                        shareRetry !== null && shareRetry.key === `${meta.id}|${shareRetry.file}|${meta.dateModified}`
+                          ? shareRetry
+                          : null;
+                      return (
+                        <button
+                          onClick={() => {
+                            if (multi && !retry) setShareMenu((open) => !open);
+                            else void handleShare(retry ? retry.file : (meta.sourceFile as string));
+                          }}
+                          disabled={sharing !== null}
+                          className={cn(
+                            'btn-primary px-2.5 py-2 text-[12px] sm:py-1 disabled:opacity-60',
+                            retry && 'ring-2 ring-amber-400 ring-offset-1',
+                          )}
+                          title={`Invia l'EPUB con i metadati della scheda (${shareLabel})`}
+                        >
+                          <IconShare className={cn('h-3.5 w-3.5', sharing !== null && 'animate-pulse')} />
+                          {sharing !== null
+                            ? 'Preparazione…'
+                            : retry
+                              ? `Tocca di nuovo per ${isApple ? 'aprire in Libri' : 'condividere'}`
+                              : `${shareLabel}${multi ? ' ▾' : ''}`}
+                        </button>
+                      );
+                    })()}
+                    {shareMenu && (
+                      <div className="absolute left-0 top-full z-10 mt-1 min-w-[16rem] max-w-[22rem] rounded-lg border border-black/[0.08] bg-white p-1 shadow-panel">
+                        {languageRows
+                          .filter((row) => shareFiles.includes(row.file))
+                          .map((row) => (
+                            <button
+                              key={row.file}
+                              onClick={() => {
+                                setShareMenu(false);
+                                void handleShare(row.file);
+                              }}
+                              className="block w-full truncate rounded-md px-2.5 py-1.5 text-left text-[12px] text-ink-200 hover:bg-black/[0.05]"
+                              title={row.file}
+                            >
+                              {languageLabel(row.language)} · {row.title || row.file}
+                            </button>
+                          ))}
+                      </div>
+                    )}
+                  </div>
                 )}
                 {meta.format === 'epub' && meta.sourceFile && (
                   <button

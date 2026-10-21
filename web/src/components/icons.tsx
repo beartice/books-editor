@@ -166,6 +166,13 @@ export const IconDownload = (p: P) => (
   </svg>
 );
 
+export const IconShare = (p: P) => (
+  <svg {...base(p)}>
+    <path d="M4 12v7a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-7" />
+    <path d="m16 7-4-4-4 4M12 3v13" />
+  </svg>
+);
+
 export const IconLayers = (p: P) => (
   <svg {...base(p)}>
     <path d="m12 2 9 5-9 5-9-5z" />

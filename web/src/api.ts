@@ -66,7 +66,7 @@ async function requestBlob(
   path: string,
   init: RequestInit = {},
   fallbackName = 'storia-efp.odt',
-): Promise<{ blob: Blob; filename: string }> {
+): Promise<{ blob: Blob; filename: string; metadata: string | null }> {
   const headers: Record<string, string> = { ...(init.headers as Record<string, string>) };
   if (init.body !== undefined && !headers['Content-Type']) {
     headers['Content-Type'] = 'application/json';
@@ -81,7 +81,7 @@ async function requestBlob(
   const encoded = /filename\*=UTF-8''([^;]+)/i.exec(disposition)?.[1];
   const plain = /filename="?([^";]+)"?/i.exec(disposition)?.[1];
   const filename = encoded ? decodeURIComponent(encoded) : plain ?? fallbackName;
-  return { blob: await response.blob(), filename };
+  return { blob: await response.blob(), filename, metadata: response.headers.get('X-Books-Metadata') };
 }
 
 export interface EfpImportResult {
@@ -187,13 +187,18 @@ export const api = {
   coverFromUrl: (id: string, url: string) =>
     request<BookMeta>(`/books/${id}/cover/url`, { method: 'POST', body: JSON.stringify({ url }) }),
 
-  /** File principale dell'opera, o uno dei file extra se `file` e' indicato. */
-  downloadBook: (id: string, file?: string) =>
-    requestBlob(
-      `/books/${id}/download${file ? `?file=${encodeURIComponent(file)}` : ''}`,
-      {},
-      file ?? 'libro',
-    ),
+  /**
+   * File principale dell'opera, o uno dei file extra se `file` e' indicato.
+   * Con `meta` l'EPUB porta i metadati della scheda; `metadata` dice cosa ha servito il server
+   * ('card' o 'original').
+   */
+  downloadBook: (id: string, file?: string, options: { meta?: boolean } = {}) => {
+    const query = new URLSearchParams();
+    if (file) query.set('file', file);
+    if (options.meta) query.set('meta', '1');
+    const qs = query.toString();
+    return requestBlob(`/books/${id}/download${qs ? `?${qs}` : ''}`, {}, file ?? 'libro');
+  },
   writeEpub: (id: string) =>
     request<{ fields: string[]; cover: boolean; backup: string }>(`/books/${id}/write-epub`, {
       method: 'POST',

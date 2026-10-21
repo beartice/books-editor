@@ -1,5 +1,6 @@
 import fsp from 'node:fs/promises';
 import { constants as fsConstants } from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import AdmZip from 'adm-zip';
 import { parseEpub } from './metadata/epub.js';
@@ -415,16 +416,28 @@ export function rewriteOpf(
   return { opf, coverPlan, fields };
 }
 
+export interface BuildEpubOptions {
+  /** Campi da scrivere (title, authors, cover...). Senza: tutti. */
+  fields?: string[];
+}
+
+export interface BuiltEpub {
+  data: Buffer;
+  fields: string[];
+  cover: boolean;
+}
+
 /**
- * Sovrascrive copertina e metadati dentro il file EPUB con quelli della scheda.
- * Modifica l'OPF a livello di testo (il resto del file resta identico), tiene
- * una copia dell'originale in `.backup/` e ricostruisce lo zip in modo conforme.
+ * Costruisce in memoria una copia dell'EPUB con i metadati della scheda, senza
+ * toccare il file originale. Il risultato viene riletto da un file temporaneo
+ * (in `os.tmpdir()`, sempre cancellato) per controllare titolo, autori e copertina.
  */
-export async function writeEpubMetadata(
+export async function buildEpubWithMetadata(
   epubPath: string,
   meta: BookMeta,
   coverPath: string | null,
-): Promise<WriteEpubResult> {
+  options: BuildEpubOptions = {},
+): Promise<BuiltEpub> {
   const zip = new AdmZip(epubPath);
   const opfPath = findOpfPath(zip);
   const opfEntry = zip.getEntry(opfPath);
@@ -437,6 +450,7 @@ export async function writeEpubMetadata(
   const raw = coverPath ? await fsp.readFile(coverPath).catch(() => null) : null;
   const hasCover = !!raw && raw.length > 0;
   const { opf: newOpf, coverPlan, fields } = rewriteOpf(opfText, meta, {
+    fields: options.fields,
     cover: hasCover ? { kind: sniffImage(raw as Buffer) } : undefined,
   });
   const coverWritten = !!coverPlan;
@@ -474,13 +488,13 @@ export async function writeEpubMetadata(
   }
   if (newCoverEntry && !coverAdded) out.addFile(newCoverEntry.name, newCoverEntry.data);
 
-  /* ---- scrittura sicura ---- */
-  const folder = path.dirname(epubPath);
-  const tmpPath = path.join(folder, `.${path.basename(epubPath)}.${process.pid}.tmp`);
+  /* ---- controllo del risultato ---- */
+  const data = out.toBuffer();
+  const tmpDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'books-epub-'));
   try {
-    out.writeZip(tmpPath);
-    // Si controlla il file nuovo prima di sostituire l'originale.
-    const info = await parseEpub(tmpPath);
+    const checkPath = path.join(tmpDir, 'check.epub');
+    await fsp.writeFile(checkPath, data);
+    const info = await parseEpub(checkPath);
     if (fields.includes('title') && info.title !== text(meta.title)) {
       throw new Error('il titolo riletto non corrisponde');
     }
@@ -488,6 +502,31 @@ export async function writeEpubMetadata(
       throw new Error('gli autori riletti non corrispondono');
     }
     if (coverWritten && !info.cover) throw new Error('la copertina non e\' stata trovata');
+  } catch (error) {
+    throw new Error(`Scrittura dell'EPUB annullata, file originale intatto: ${(error as Error).message}`);
+  } finally {
+    await fsp.rm(tmpDir, { recursive: true, force: true });
+  }
+  return { data, fields, cover: coverWritten };
+}
+
+/**
+ * Sovrascrive copertina e metadati dentro il file EPUB con quelli della scheda.
+ * Modifica l'OPF a livello di testo (il resto del file resta identico), tiene
+ * una copia dell'originale in `.backup/` e ricostruisce lo zip in modo conforme.
+ */
+export async function writeEpubMetadata(
+  epubPath: string,
+  meta: BookMeta,
+  coverPath: string | null,
+): Promise<WriteEpubResult> {
+  const { data, fields, cover } = await buildEpubWithMetadata(epubPath, meta, coverPath);
+
+  /* ---- scrittura sicura ---- */
+  const folder = path.dirname(epubPath);
+  const tmpPath = path.join(folder, `.${path.basename(epubPath)}.${process.pid}.tmp`);
+  try {
+    await fsp.writeFile(tmpPath, data);
   } catch (error) {
     await fsp.rm(tmpPath, { force: true });
     throw new Error(`Scrittura dell'EPUB annullata, file originale intatto: ${(error as Error).message}`);
@@ -507,5 +546,5 @@ export async function writeEpubMetadata(
     throw new Error(`Scrittura dell'EPUB non riuscita: ${(error as Error).message}`);
   }
 
-  return { fields, cover: coverWritten, backup };
+  return { fields, cover, backup };
 }

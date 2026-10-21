@@ -32,7 +32,7 @@ import { getCoverThumbnail, removeCoverThumbnails } from './thumbnails.js';
 import { lookupSeries, readCachedSeries } from './providers/series.js';
 import { readSeriesTotals, writeSeriesTotal } from './seriesCache.js';
 import { importAppleBooks, syncAppleBooksForBooks } from './appleBooks.js';
-import { writeEpubMetadata } from './epubWrite.js';
+import { buildEpubWithMetadata, writeEpubMetadata } from './epubWrite.js';
 import { AppleBooksError, appleBooksStatus, writeToAppleBooks, type AppleBooksField } from './appleBooksWrite.js';
 import { buildEpub, buildOdt, importEfpStory, loadEfpStory } from './efp.js';
 import {
@@ -450,7 +450,7 @@ export async function registerApi(app: FastifyInstance): Promise<void> {
    * Scarica il file principale dell'opera o uno dei suoi file extra (es. l'ODT
    * delle storie EFP). Si servono solo i file registrati nella scheda.
    */
-  app.get<{ Params: { id: string }; Querystring: { file?: string } }>(
+  app.get<{ Params: { id: string }; Querystring: { file?: string; meta?: string } }>(
     '/api/books/:id/download',
     async (request, reply) => {
       const book = await getBookMeta(request.params.id);
@@ -474,11 +474,30 @@ export async function registerApi(app: FastifyInstance): Promise<void> {
         return reply.code(404).send({ error: `File non trovato nella cartella: ${file}` });
       }
 
+      const mime = FILE_MIME[path.extname(file).toLowerCase()] ?? 'application/octet-stream';
+
+      // meta=1 (solo EPUB): copia in memoria con i metadati della scheda, il file su disco non cambia.
+      if (request.query.meta === '1' && path.extname(file).toLowerCase() === '.epub') {
+        const record = await getBookRecord(request.params.id);
+        // Il titolo si scrive solo nel file principale: le altre edizioni sono in un'altra lingua.
+        const fields = file === book.sourceFile ? ['title', 'authors', 'cover'] : ['authors', 'cover'];
+        try {
+          const built = await buildEpubWithMetadata(filePath, book, record?.coverPath ?? null, { fields });
+          return reply
+            .header('Content-Type', mime)
+            .header('Content-Length', built.data.length)
+            .header('Content-Disposition', attachmentHeader(downloadName(book, file)))
+            .header('Cache-Control', 'no-store')
+            .header('X-Books-Metadata', 'card')
+            .send(built.data);
+        } catch (error) {
+          request.log.warn({ err: error, file }, 'Metadati della scheda non scritti: si invia il file originale');
+          reply.header('X-Books-Metadata', 'original');
+        }
+      }
+
       return reply
-        .header(
-          'Content-Type',
-          FILE_MIME[path.extname(file).toLowerCase()] ?? 'application/octet-stream',
-        )
+        .header('Content-Type', mime)
         .header('Content-Length', stat.size)
         .header('Content-Disposition', attachmentHeader(downloadName(book, file)))
         .header('Cache-Control', 'no-store')
