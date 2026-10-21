@@ -395,7 +395,7 @@ export default function DetailPanel({
     }
   };
 
-  // Condivisione (iOS: foglio di sistema -> «Libri»). Su desktop o senza file nella Web Share API non compare.
+  // Condivisione (Android e simili: foglio di sistema). Su desktop o senza file nella Web Share API non compare.
   const canShareEpub =
     typeof navigator !== 'undefined' &&
     typeof navigator.canShare === 'function' &&
@@ -411,7 +411,13 @@ export default function DetailPanel({
   const isApple =
     /iPhone|iPad|iPod/.test(navigator.userAgent) ||
     (/Macintosh/.test(navigator.userAgent) && navigator.maxTouchPoints > 1);
-  const shareLabel = isApple ? 'Apri in Libri' : 'Condividi EPUB';
+  // Su iOS/iPadOS il foglio di condivisione non offre Libri: si naviga verso l'EPUB servito inline,
+  // e Safari mostra l'anteprima con «Apri in "Libri"».
+  const openInBooksUrl = (file: string) => {
+    const params = new URLSearchParams({ meta: '1', inline: '1' });
+    if (file !== meta.sourceFile) params.set('file', file);
+    return `/api/books/${encodeURIComponent(meta.id)}/download?${params.toString()}`;
+  };
   const shareFiles = (meta.format === 'epub' && meta.sourceFile ? [meta.sourceFile, ...editions.map((e) => e.file)] : [])
     .filter((file, index, all) => file.toLowerCase().endsWith('.epub') && all.indexOf(file) === index);
 
@@ -602,7 +608,56 @@ export default function DetailPanel({
                     </button>
                   ),
                 )}
-                {canShareEpub && shareFiles.length > 0 && (
+                {isApple && shareFiles.length > 0 && (
+                  <div className="relative">
+                    {hasEditions && shareFiles.length > 1 ? (
+                      <div ref={shareMenuRef} className="relative">
+                        <button
+                          onClick={() => setShareMenu((open) => !open)}
+                          className="btn-primary px-2.5 py-2 text-[12px] sm:py-1"
+                          title={'Si apre l\'anteprima: tocca "Apri in Libri"'}
+                        >
+                          <IconShare className="h-3.5 w-3.5" />
+                          Apri in Libri ▾
+                        </button>
+                        {shareMenu && (
+                          <div className="absolute left-0 top-full z-10 mt-1 min-w-[16rem] max-w-[22rem] rounded-lg border border-black/[0.08] bg-white p-1 shadow-panel">
+                            {languageRows
+                              .filter((row) => shareFiles.includes(row.file))
+                              .map((row) => (
+                                <a
+                                  key={row.file}
+                                  href={openInBooksUrl(row.file)}
+                                  target="_blank"
+                                  rel="noopener"
+                                  onClick={() => setShareMenu(false)}
+                                  className="block w-full truncate rounded-md px-2.5 py-1.5 text-left text-[12px] text-ink-200 hover:bg-black/[0.05]"
+                                  title={row.file}
+                                >
+                                  {languageLabel(row.language)} · {row.title || row.file}
+                                </a>
+                              ))}
+                          </div>
+                        )}
+                      </div>
+                    ) : (
+                      <a
+                        href={openInBooksUrl(meta.sourceFile as string)}
+                        target="_blank"
+                        rel="noopener"
+                        className="btn-primary px-2.5 py-2 text-[12px] sm:py-1"
+                        title={'Si apre l\'anteprima: tocca "Apri in Libri"'}
+                      >
+                        <IconShare className="h-3.5 w-3.5" />
+                        Apri in Libri
+                      </a>
+                    )}
+                    <span className="mt-1 block text-[10px] leading-tight text-ink-400">
+                      Si apre l'anteprima: tocca "Apri in Libri"
+                    </span>
+                  </div>
+                )}
+                {!isApple && canShareEpub && shareFiles.length > 0 && (
                   <div ref={shareMenuRef} className="relative">
                     {(() => {
                       const multi = hasEditions && shareFiles.length > 1;
@@ -622,14 +677,14 @@ export default function DetailPanel({
                             'btn-primary px-2.5 py-2 text-[12px] sm:py-1 disabled:opacity-60',
                             retry && 'ring-2 ring-amber-400 ring-offset-1',
                           )}
-                          title={`Invia l'EPUB con i metadati della scheda (${shareLabel})`}
+                          title="Invia l'EPUB con i metadati della scheda (Condividi EPUB)"
                         >
                           <IconShare className={cn('h-3.5 w-3.5', sharing !== null && 'animate-pulse')} />
                           {sharing !== null
                             ? 'Preparazione…'
                             : retry
-                              ? `Tocca di nuovo per ${isApple ? 'aprire in Libri' : 'condividere'}`
-                              : `${shareLabel}${multi ? ' ▾' : ''}`}
+                              ? 'Tocca di nuovo per condividere'
+                              : `Condividi EPUB${multi ? ' ▾' : ''}`}
                         </button>
                       );
                     })()}

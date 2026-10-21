@@ -69,14 +69,14 @@ const FILE_MIME: Record<string, string> = {
   '.azw3': 'application/vnd.amazon.ebook',
 };
 
-/** Content-Disposition per un download, con fallback ASCII per i browser vecchi. */
-function attachmentHeader(filename: string): string {
+/** Content-Disposition per un download (o `inline`), con fallback ASCII per i browser vecchi. */
+function attachmentHeader(filename: string, disposition: 'attachment' | 'inline' = 'attachment'): string {
   const ascii = filename
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')
     .replace(/[^\x20-\x7E]/g, '_')
     .replace(/["\\]/g, '_');
-  return `attachment; filename="${ascii}"; filename*=UTF-8''${encodeURIComponent(filename)}`;
+  return `${disposition}; filename="${ascii}"; filename*=UTF-8''${encodeURIComponent(filename)}`;
 }
 
 /**
@@ -450,7 +450,7 @@ export async function registerApi(app: FastifyInstance): Promise<void> {
    * Scarica il file principale dell'opera o uno dei suoi file extra (es. l'ODT
    * delle storie EFP). Si servono solo i file registrati nella scheda.
    */
-  app.get<{ Params: { id: string }; Querystring: { file?: string; meta?: string } }>(
+  app.get<{ Params: { id: string }; Querystring: { file?: string; meta?: string; inline?: string } }>(
     '/api/books/:id/download',
     async (request, reply) => {
       const book = await getBookMeta(request.params.id);
@@ -475,6 +475,10 @@ export async function registerApi(app: FastifyInstance): Promise<void> {
       }
 
       const mime = FILE_MIME[path.extname(file).toLowerCase()] ?? 'application/octet-stream';
+      // inline=1 vale solo per EPUB e PDF (anteprima di iOS con «Apri in Libri»): mai HTML o testo inline dalla nostra origine.
+      const ext = path.extname(file).toLowerCase();
+      const disposition =
+        request.query.inline === '1' && (ext === '.epub' || ext === '.pdf') ? 'inline' : 'attachment';
 
       // meta=1 (solo EPUB): copia in memoria con i metadati della scheda, il file su disco non cambia.
       if (request.query.meta === '1' && path.extname(file).toLowerCase() === '.epub') {
@@ -486,7 +490,7 @@ export async function registerApi(app: FastifyInstance): Promise<void> {
           return reply
             .header('Content-Type', mime)
             .header('Content-Length', built.data.length)
-            .header('Content-Disposition', attachmentHeader(downloadName(book, file)))
+            .header('Content-Disposition', attachmentHeader(downloadName(book, file), disposition))
             .header('Cache-Control', 'no-store')
             .header('X-Books-Metadata', 'card')
             .send(built.data);
@@ -499,7 +503,7 @@ export async function registerApi(app: FastifyInstance): Promise<void> {
       return reply
         .header('Content-Type', mime)
         .header('Content-Length', stat.size)
-        .header('Content-Disposition', attachmentHeader(downloadName(book, file)))
+        .header('Content-Disposition', attachmentHeader(downloadName(book, file), disposition))
         .header('Cache-Control', 'no-store')
         .send(fs.createReadStream(filePath));
     },
