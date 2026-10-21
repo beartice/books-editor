@@ -1,0 +1,1000 @@
+import path from 'node:path';
+import fs from 'node:fs';
+import fsp from 'node:fs/promises';
+import type { FastifyInstance } from 'fastify';
+import { DEFAULT_LIBRARY_ROOT, IMPORT_ROOTS, IS_PRODUCTION, LIBRARY_ROOT_LOCKED, ensureDir } from './config.js';
+import { prepareLibraryRoot } from './libraryRoot.js';
+import { loadIndex, loadSettings, saveIndex, saveSettings, toSummary } from './store.js';
+import {
+  applyCandidate,
+  attachEdition,
+  downloadCoverToFolder,
+  editionSuggestions,
+  emptyMeta,
+  extractCoverFromFile,
+  findDuplicate,
+  findIdenticalFile,
+  getBookMeta,
+  getBookRecord,
+  importPath,
+  listBooks,
+  mergeBooks,
+  refreshFromFile,
+  removeCover,
+  removeEdition,
+  scanLibrary,
+  setCover,
+  updateBook,
+  writeBookJsonPublic,
+} from './library.js';
+import { lookupFanficPage, lookupGoogleVolume, lookupOnline } from './providers/index.js';
+import { getCoverThumbnail, removeCoverThumbnails } from './thumbnails.js';
+import { lookupSeries, readCachedSeries } from './providers/series.js';
+import { readSeriesTotals, writeSeriesTotal } from './seriesCache.js';
+import { importAppleBooks, syncAppleBooksForBooks } from './appleBooks.js';
+import { writeEpubMetadata } from './epubWrite.js';
+import { AppleBooksError, appleBooksStatus, writeToAppleBooks, type AppleBooksField } from './appleBooksWrite.js';
+import { buildEpub, buildOdt, importEfpStory, loadEfpStory } from './efp.js';
+import {
+  getJellyfinImportState,
+  getJellyfinInfo,
+  listJellyfinLibraries,
+  previewJellyfinImport,
+  startJellyfinImport,
+} from './jellyfin.js';
+import type { DuplicateMatch } from './library.js';
+import { READING_STATUSES } from '../../shared/types.js';
+import type { AppSettings, BookMeta, MetadataCandidate, ReadingStatus } from '../../shared/types.js';
+
+const COVER_MIME: Record<string, string> = {
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.png': 'image/png',
+  '.webp': 'image/webp',
+  '.gif': 'image/gif',
+  '.avif': 'image/avif',
+};
+
+const FILE_MIME: Record<string, string> = {
+  '.epub': 'application/epub+zip',
+  '.pdf': 'application/pdf',
+  '.odt': 'application/vnd.oasis.opendocument.text',
+  '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  '.doc': 'application/msword',
+  '.rtf': 'application/rtf',
+  '.txt': 'text/plain; charset=utf-8',
+  '.md': 'text/markdown; charset=utf-8',
+  '.html': 'text/html; charset=utf-8',
+  '.mobi': 'application/x-mobipocket-ebook',
+  '.azw3': 'application/vnd.amazon.ebook',
+};
+
+/** Content-Disposition per un download, con fallback ASCII per i browser vecchi. */
+function attachmentHeader(filename: string): string {
+  const ascii = filename
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^\x20-\x7E]/g, '_')
+    .replace(/["\\]/g, '_');
+  return `attachment; filename="${ascii}"; filename*=UTF-8''${encodeURIComponent(filename)}`;
+}
+
+/**
+ * Nome del file scaricato: per il file principale "Autore - Titolo.ext" (i file
+ * caricati dal browser hanno un prefisso numerico), per gli extra il nome reale.
+ * Se la scheda ha piu' lingue, ogni file porta il suo titolo e il codice lingua,
+ * es. "Autore - Titolo (IT).epub".
+ */
+function downloadName(book: BookMeta, file: string): string {
+  const edition = (book.editions ?? []).find((item) => item.file === file);
+  const isMain = file === book.sourceFile;
+  if (!isMain && !edition) return path.basename(file);
+  const title = (edition ? edition.title : book.title).trim() || book.title.trim();
+  if (!title) return path.basename(file);
+  const language = (edition ? edition.language : book.language).trim().toUpperCase();
+  const suffix = book.editions?.length && /^[A-Z]{2}$/.test(language) ? ` (${language})` : '';
+  const base = book.authors[0] ? `${book.authors[0]} - ${title}` : title;
+  const safe = `${base}${suffix}`
+    .replace(/[<>:"/\\|?*\u0000-\u001f]/g, '-')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 150);
+  return `${safe}${path.extname(file).toLowerCase()}`;
+}
+
+/**
+ * Non espone mai la chiave API al browser: la sostituisce con un flag
+ * booleano che l'interfaccia usa per mostrare "chiave configurata".
+ */
+/**
+ * Controlla che «Importa da percorso» possa leggere il percorso indicato.
+ * Con IMPORT_ROOTS risolve i symlink e richiede che sia dentro una radice;
+ * in produzione senza IMPORT_ROOTS la funzione e' disattivata.
+ * Ritorna il percorso da usare, oppure il messaggio d'errore (403).
+ */
+async function guardImportPath(target: string): Promise<{ path: string } | { error: string }> {
+  if (IMPORT_ROOTS.length === 0) {
+    if (IS_PRODUCTION) {
+      return { error: 'L\'importazione da percorso del server e\' disattivata' };
+    }
+    return { path: target };
+  }
+  let real: string;
+  try {
+    real = await fsp.realpath(path.resolve(target));
+  } catch {
+    return { error: 'Percorso non consentito o inesistente' };
+  }
+  for (const root of IMPORT_ROOTS) {
+    const realRoot = await fsp.realpath(root).catch(() => root);
+    if (real === realRoot || real.startsWith(realRoot + path.sep)) return { path: real };
+  }
+  return { error: 'Percorso non consentito: fuori dalle cartelle di importazione autorizzate' };
+}
+
+function publicSettings(settings: AppSettings): AppSettings {
+  const { googleBooksApiKey, jellyfinApiKey, ...rest } = settings;
+  return {
+    ...rest,
+    libraryRootLocked: LIBRARY_ROOT_LOCKED,
+    jellyfinApiKeySet: Boolean(jellyfinApiKey?.trim()),
+    googleBooksApiKeySet: Boolean(googleBooksApiKey?.trim()),
+    googleBooksApiKeyEnvSet: Boolean(process.env.GOOGLE_BOOKS_API_KEY?.trim()),
+  };
+}
+
+function statsFor(books: BookMeta[]) {
+  let words = 0;
+  let withCover = 0;
+  let missingMetadata = 0;
+  const byFormat: Record<string, number> = {};
+  let books_ = 0;
+  let fanfics = 0;
+
+  for (const book of books) {
+    words += book.wordCount ?? 0;
+    if (book.coverFile) withCover += 1;
+    if (book.kind === 'fanfic') fanfics += 1;
+    else books_ += 1;
+    byFormat[book.format] = (byFormat[book.format] ?? 0) + 1;
+    if (!book.authors.length || !book.title) missingMetadata += 1;
+  }
+
+  return {
+    total: books.length,
+    books: books_,
+    fanfics,
+    words,
+    withCover,
+    missingMetadata,
+    byFormat,
+  };
+}
+
+/** Risposta 409 per un'opera gia' presente (con i dati della lingua, se e' un'altra lingua). */
+function duplicateReply(duplicate: DuplicateMatch) {
+  return {
+    error: 'Opera gia\' presente nella libreria',
+    duplicate: {
+      reason: duplicate.reason,
+      book: toSummary(duplicate.book),
+      ...(duplicate.reason === 'language'
+        ? { language: duplicate.language, existingLanguages: duplicate.existingLanguages }
+        : {}),
+    },
+  };
+}
+
+/** Salva un file caricato dal browser in `.uploads` e ne restituisce il percorso. */
+async function stageUpload(filename: string | undefined, data: Buffer): Promise<string> {
+  const settings = await loadSettings();
+  const staging = path.join(settings.libraryRoot, '.uploads');
+  await fsp.mkdir(staging, { recursive: true });
+  const safeName = path.basename(filename ?? 'opera').replace(/[\\/:*?"<>|]/g, '-');
+  const tempPath = path.join(staging, `${Date.now()}-${safeName}`);
+  await fsp.writeFile(tempPath, data);
+  return tempPath;
+}
+
+export async function registerApi(app: FastifyInstance): Promise<void> {
+  app.get('/api/health', async () => ({ ok: true, version: '1.0.0' }));
+
+  /* ------------------------------------------------------- impostazioni -- */
+  app.get('/api/settings', async () => publicSettings(await loadSettings()));
+
+  app.put<{ Body: Partial<AppSettings> }>('/api/settings', async (request, reply) => {
+    const patch = { ...request.body };
+    delete patch.googleBooksApiKeySet;
+    delete patch.googleBooksApiKeyEnvSet;
+    delete patch.jellyfinApiKeySet;
+    if (typeof patch.jellyfinApiKey === 'string') {
+      patch.jellyfinApiKey = patch.jellyfinApiKey.trim();
+    } else {
+      delete patch.jellyfinApiKey;
+    }
+    if (typeof patch.jellyfinUrl === 'string') {
+      let url = patch.jellyfinUrl.trim().replace(/\/+$/, '');
+      if (url && !/^https?:\/\/[^\s/]+/i.test(url)) {
+        return reply.code(400).send({
+          error: 'Indirizzo Jellyfin non valido: deve iniziare con http:// o https://',
+        });
+      }
+      patch.jellyfinUrl = url;
+    } else {
+      delete patch.jellyfinUrl;
+    }
+    if (typeof patch.googleBooksApiKey === 'string') {
+      patch.googleBooksApiKey = patch.googleBooksApiKey.trim();
+    } else {
+      delete patch.googleBooksApiKey;
+    }
+    delete patch.libraryRootLocked;
+    if (LIBRARY_ROOT_LOCKED && patch.libraryRoot !== undefined) {
+      // Il client rimanda il valore invariato: va bene, e' solo un cambio a essere rifiutato.
+      if (path.resolve(String(patch.libraryRoot)) !== path.resolve(DEFAULT_LIBRARY_ROOT)) {
+        return reply.code(400).send({
+          error: 'La cartella della libreria e\' bloccata dalla variabile d\'ambiente LIBRARY_ROOT',
+        });
+      }
+      delete patch.libraryRoot;
+    }
+    if (patch.libraryRoot) {
+      const prepared = await prepareLibraryRoot(String(patch.libraryRoot));
+      if ('error' in prepared) return reply.code(400).send({ error: prepared.error });
+      patch.libraryRoot = prepared.path;
+    }
+    if (patch.seriesRefreshDays !== undefined) {
+      const days = Math.round(Number(patch.seriesRefreshDays));
+      patch.seriesRefreshDays = Number.isFinite(days)
+        ? Math.min(365, Math.max(1, days))
+        : 30;
+    }
+    return publicSettings(await saveSettings(patch));
+  });
+
+  /* ----------------------------------------------------------- jellyfin -- */
+  app.get('/api/jellyfin/info', async (_request, reply) => {
+    try {
+      return await getJellyfinInfo();
+    } catch (error) {
+      return reply.code(400).send({ error: (error as Error).message });
+    }
+  });
+
+  app.get('/api/jellyfin/libraries', async (_request, reply) => {
+    try {
+      return await listJellyfinLibraries();
+    } catch (error) {
+      return reply.code(400).send({ error: (error as Error).message });
+    }
+  });
+
+  app.post<{ Body: { libraryId?: string } }>('/api/jellyfin/preview', async (request, reply) => {
+    const libraryId = request.body?.libraryId?.trim();
+    if (!libraryId) return reply.code(400).send({ error: 'Libreria Jellyfin non indicata' });
+    try {
+      return await previewJellyfinImport(libraryId);
+    } catch (error) {
+      return reply.code(400).send({ error: (error as Error).message });
+    }
+  });
+
+  app.post<{ Body: { libraryId?: string } }>('/api/jellyfin/import', async (request, reply) => {
+    const libraryId = request.body?.libraryId?.trim();
+    if (!libraryId) return reply.code(400).send({ error: 'Libreria Jellyfin non indicata' });
+    if (getJellyfinImportState()?.running) {
+      return reply.code(409).send({ error: 'Un import da Jellyfin e\' gia\' in corso' });
+    }
+    try {
+      return await startJellyfinImport(libraryId);
+    } catch (error) {
+      return reply.code(400).send({ error: (error as Error).message });
+    }
+  });
+
+  app.get('/api/jellyfin/import', async () => getJellyfinImportState());
+
+  /* ------------------------------------------------------------- libri -- */
+  app.get('/api/books', async () => {
+    const books = await listBooks();
+    const full = await loadIndex();
+    return { books, stats: statsFor(full) };
+  });
+
+  app.get<{ Params: { id: string } }>('/api/books/:id', async (request, reply) => {
+    const book = await getBookMeta(request.params.id);
+    if (!book) return reply.code(404).send({ error: 'Libro non trovato' });
+    return book;
+  });
+
+  app.patch<{ Params: { id: string }; Body: Partial<BookMeta> }>(
+    '/api/books/:id',
+    async (request, reply) => {
+      try {
+        const allowed = pickAllowed(request.body);
+        const updated = await updateBook(request.params.id, allowed, 'manual');
+        return updated;
+      } catch (error) {
+        return reply.code(404).send({ error: (error as Error).message });
+      }
+    },
+  );
+
+  app.delete<{ Params: { id: string }; Querystring: { keepFiles?: string } }>(
+    '/api/books/:id',
+    async (request, reply) => {
+      const record = await getBookRecord(request.params.id);
+      if (!record) return reply.code(404).send({ error: 'Libro non trovato' });
+      const settings = await loadSettings();
+      if (request.query.keepFiles !== '1') {
+        const folderPath = path.join(settings.libraryRoot, record.meta.folder);
+        await fsp.rm(folderPath, { recursive: true, force: true });
+      }
+      const store = await import('./store.js');
+      const index = await store.loadIndex();
+      await store.saveIndex(index.filter((book) => book.id !== request.params.id));
+      await removeCoverThumbnails(request.params.id);
+      return { ok: true };
+    },
+  );
+
+  /**
+   * Sovrascrive copertina e metadati dentro il file EPUB con quelli della scheda.
+   * L'originale viene salvato una sola volta in `.backup/`.
+   */
+  app.post<{ Params: { id: string } }>('/api/books/:id/write-epub', async (request, reply) => {
+    const record = await getBookRecord(request.params.id);
+    if (!record) return reply.code(404).send({ error: 'Libro non trovato' });
+    if (record.meta.format !== 'epub' || !record.sourcePath) {
+      return reply.code(400).send({ error: 'Solo i libri EPUB con un file nella cartella possono essere aggiornati' });
+    }
+    try {
+      // Con piu' lingue si aggiorna solo il file principale: le altre edizioni restano com'erano.
+      return await writeEpubMetadata(record.sourcePath, record.meta, record.coverPath);
+    } catch (error) {
+      return reply.code(400).send({ error: (error as Error).message });
+    }
+  });
+
+  /** Stato della scrittura su Apple Books: disponibile solo su macOS e per libri importati. */
+  app.get<{ Params: { id: string } }>('/api/books/:id/applebooks', async (request, reply) => {
+    const record = await getBookRecord(request.params.id);
+    if (!record) return reply.code(404).send({ error: 'Libro non trovato' });
+    return appleBooksStatus(record);
+  });
+
+  /** Scrive copertina, titolo e autore nella copia del libro che Apple Books ha gia'. */
+  app.post<{ Params: { id: string }; Body: { fields?: string[]; quitApp?: boolean } }>(
+    '/api/books/:id/applebooks',
+    async (request, reply) => {
+      const record = await getBookRecord(request.params.id);
+      if (!record) return reply.code(404).send({ error: 'Libro non trovato' });
+      const allowed: AppleBooksField[] = ['title', 'authors', 'cover'];
+      const fields = (request.body?.fields ?? []).filter((f): f is AppleBooksField =>
+        (allowed as string[]).includes(f),
+      );
+      if (!fields.length) return reply.code(400).send({ error: 'Scegli almeno un campo da scrivere' });
+      try {
+        return await writeToAppleBooks(record, { fields, quitApp: request.body?.quitApp === true });
+      } catch (error) {
+        const code = error instanceof AppleBooksError && error.code === 'running' ? 409 : 400;
+        return reply.code(code).send({ error: (error as Error).message });
+      }
+    },
+  );
+
+  /* ------------------------------------------------- lingue (edizioni) -- */
+  /** Altre schede che sembrano la stessa opera in un'altra lingua. */
+  app.get<{ Params: { id: string } }>(
+    '/api/books/:id/edition-suggestions',
+    async (request, reply) => {
+      try {
+        return (await editionSuggestions(request.params.id)).map(toSummary);
+      } catch (error) {
+        return reply.code(404).send({ error: (error as Error).message });
+      }
+    },
+  );
+
+  /** Carica un file e lo aggiunge alla scheda come edizione in un'altra lingua. */
+  app.post<{ Params: { id: string } }>('/api/books/:id/editions', async (request, reply) => {
+    const book = await getBookMeta(request.params.id);
+    if (!book) return reply.code(404).send({ error: 'Libro non trovato' });
+    const file = await request.file();
+    if (!file) return reply.code(400).send({ error: 'Nessun file ricevuto' });
+    const tempPath = await stageUpload(file.filename, await file.toBuffer());
+    try {
+      const same = await findIdenticalFile(book, tempPath);
+      if (same) {
+        return reply.code(409).send({
+          error: `Il file e' identico a «${same}», gia' presente nella scheda`,
+          duplicate: { reason: 'file', book: toSummary(book) },
+        });
+      }
+      return await attachEdition(book.id, tempPath);
+    } catch (error) {
+      return reply.code(400).send({ error: (error as Error).message });
+    } finally {
+      await fsp.rm(tempPath, { force: true });
+    }
+  });
+
+  app.delete<{ Params: { id: string }; Querystring: { file?: string } }>(
+    '/api/books/:id/editions',
+    async (request, reply) => {
+      const file = request.query.file;
+      if (!file) return reply.code(400).send({ error: 'File mancante' });
+      try {
+        return await removeEdition(request.params.id, file);
+      } catch (error) {
+        return reply.code(400).send({ error: (error as Error).message });
+      }
+    },
+  );
+
+  /** Unisce un'altra scheda a questa: i suoi file diventano altre lingue. */
+  app.post<{ Params: { id: string }; Body: { otherId?: string } }>(
+    '/api/books/:id/merge',
+    async (request, reply) => {
+      const otherId = request.body?.otherId;
+      if (!otherId) return reply.code(400).send({ error: 'Scheda da unire mancante' });
+      try {
+        return await mergeBooks(request.params.id, otherId);
+      } catch (error) {
+        return reply.code(400).send({ error: (error as Error).message });
+      }
+    },
+  );
+
+  /**
+   * Scarica il file principale dell'opera o uno dei suoi file extra (es. l'ODT
+   * delle storie EFP). Si servono solo i file registrati nella scheda.
+   */
+  app.get<{ Params: { id: string }; Querystring: { file?: string } }>(
+    '/api/books/:id/download',
+    async (request, reply) => {
+      const book = await getBookMeta(request.params.id);
+      if (!book) return reply.code(404).send({ error: 'Libro non trovato' });
+      const allowed = [book.sourceFile, ...(book.extraFiles ?? [])].filter(
+        (name): name is string => Boolean(name),
+      );
+      const file = request.query.file || book.sourceFile;
+      if (!file || !allowed.includes(file)) {
+        return reply.code(404).send({ error: 'File non disponibile per questa opera' });
+      }
+
+      const settings = await loadSettings();
+      const folderPath = path.resolve(settings.libraryRoot, book.folder);
+      const filePath = path.resolve(folderPath, file);
+      if (path.relative(folderPath, filePath).startsWith('..')) {
+        return reply.code(400).send({ error: 'Percorso non valido' });
+      }
+      const stat = await fsp.stat(filePath).catch(() => null);
+      if (!stat?.isFile()) {
+        return reply.code(404).send({ error: `File non trovato nella cartella: ${file}` });
+      }
+
+      return reply
+        .header(
+          'Content-Type',
+          FILE_MIME[path.extname(file).toLowerCase()] ?? 'application/octet-stream',
+        )
+        .header('Content-Length', stat.size)
+        .header('Content-Disposition', attachmentHeader(downloadName(book, file)))
+        .header('Cache-Control', 'no-store')
+        .send(fs.createReadStream(filePath));
+    },
+  );
+
+  /* ---------------------------------------------------------- copertine -- */
+  app.get<{ Params: { id: string }; Querystring: { w?: string; t?: string } }>(
+    '/api/covers/:id',
+    async (request, reply) => {
+    const record = await getBookRecord(request.params.id);
+    if (!record?.coverPath) return reply.code(404).send({ error: 'Copertina assente' });
+    // Con la versione (t) il contenuto non cambia mai per quell'URL; le copertine
+    // stanno dietro il login, quindi la cache e' solo del browser (private).
+    const cacheControl = request.query.t
+      ? 'private, max-age=31536000, immutable'
+      : 'private, max-age=86400';
+    try {
+      // Miniature solo alle larghezze ammesse; altrimenti si serve l'originale.
+      const width = request.query.w === '120' ? 120 : request.query.w === '480' ? 480 : 0;
+      if (width) {
+        const thumb = await getCoverThumbnail(request.params.id, record.coverPath, width);
+        if (thumb) {
+          return reply
+            .header('Content-Type', thumb.type)
+            .header('Cache-Control', cacheControl)
+            .send(thumb.data);
+        }
+      }
+      const data = await fsp.readFile(record.coverPath);
+      const ext = path.extname(record.coverPath).toLowerCase();
+      return reply
+        .header('Content-Type', COVER_MIME[ext] ?? 'application/octet-stream')
+        .header('Cache-Control', cacheControl)
+        .send(data);
+    } catch {
+      return reply.code(404).send({ error: 'Copertina non trovata' });
+    }
+    },
+  );
+
+  app.post<{ Params: { id: string } }>('/api/books/:id/cover', async (request, reply) => {
+    const file = await request.file();
+    if (!file) return reply.code(400).send({ error: 'Nessun file ricevuto' });
+    const buffer = await file.toBuffer();
+    if (buffer.length > 25 * 1024 * 1024) {
+      return reply.code(413).send({ error: 'Copertina troppo grande (max 25 MB)' });
+    }
+    const ext = path.extname(file.filename ?? '.jpg').toLowerCase() || '.jpg';
+    try {
+      const updated = await setCover(request.params.id, buffer, ext);
+      return updated;
+    } catch (error) {
+      return reply.code(404).send({ error: (error as Error).message });
+    }
+  });
+
+  app.post<{ Params: { id: string }; Body: { url?: string } }>(
+    '/api/books/:id/cover/url',
+    async (request, reply) => {
+      const url = request.body?.url;
+      if (!url) return reply.code(400).send({ error: 'URL mancante' });
+      try {
+        return await downloadCoverToFolder(request.params.id, url);
+      } catch (error) {
+        return reply.code(400).send({ error: (error as Error).message });
+      }
+    },
+  );
+
+  app.post<{ Params: { id: string } }>('/api/books/:id/cover/extract', async (request, reply) => {
+    try {
+      return await extractCoverFromFile(request.params.id);
+    } catch (error) {
+      return reply.code(400).send({ error: (error as Error).message });
+    }
+  });
+
+  app.delete<{ Params: { id: string } }>('/api/books/:id/cover', async (request, reply) => {
+    try {
+      return await removeCover(request.params.id);
+    } catch (error) {
+      return reply.code(404).send({ error: (error as Error).message });
+    }
+  });
+
+  /* ------------------------------------------------- metadati e provider -- */
+  app.post<{ Params: { id: string } }>('/api/books/:id/refresh', async (request, reply) => {
+    try {
+      return await refreshFromFile(request.params.id);
+    } catch (error) {
+      return reply.code(400).send({ error: (error as Error).message });
+    }
+  });
+
+  app.post<{ Params: { id: string } }>('/api/books/:id/lookup', async (request, reply) => {
+    const book = await getBookMeta(request.params.id);
+    if (!book) return reply.code(404).send({ error: 'Libro non trovato' });
+    const settings = await loadSettings();
+    try {
+      const outcome = await lookupOnline(book, settings.providers, settings.searchLanguage, {
+        googleBooksApiKey: settings.googleBooksApiKey,
+      });
+      return {
+        candidates: outcome.candidates,
+        errors: outcome.errors,
+        missing: missingFields(book),
+      };
+    } catch (error) {
+      return reply.code(502).send({ error: (error as Error).message });
+    }
+  });
+
+  app.post<{ Params: { id: string }; Body: { url?: string } }>(
+    '/api/books/:id/lookup/google',
+    async (request, reply) => {
+      const book = await getBookMeta(request.params.id);
+      if (!book) return reply.code(404).send({ error: 'Libro non trovato' });
+      const input = (request.body?.url ?? '').trim();
+      if (!input) return reply.code(400).send({ error: 'Incolla un link o un ID Google Books' });
+      const settings = await loadSettings();
+      try {
+        const candidate = await lookupGoogleVolume(input, {
+          googleBooksApiKey: settings.googleBooksApiKey,
+        });
+        return {
+          candidates: [candidate],
+          errors: [],
+          missing: missingFields(book),
+        };
+      } catch (error) {
+        return reply.code(502).send({ error: (error as Error).message });
+      }
+    },
+  );
+
+  app.post<{ Params: { id: string }; Body: { url?: string } }>(
+    '/api/books/:id/lookup/ao3',
+    async (request, reply) => {
+      const book = await getBookMeta(request.params.id);
+      if (!book) return reply.code(404).send({ error: 'Libro non trovato' });
+      const input = (request.body?.url ?? '').trim();
+      if (!input) return reply.code(400).send({ error: "Incolla un link AO3 o l'ID dell'opera" });
+      try {
+        const candidate = await lookupFanficPage(input);
+        return {
+          candidates: [candidate],
+          errors: [],
+          missing: missingFields(book),
+        };
+      } catch (error) {
+        return reply.code(502).send({ error: (error as Error).message });
+      }
+    },
+  );
+
+  app.post<{
+    Body: {
+      series?: string;
+      authors?: string[];
+      isbns?: string[];
+      ao3Urls?: string[];
+      kind?: 'book' | 'fanfic';
+      refresh?: boolean;
+    };
+  }>('/api/series/lookup', async (request, reply) => {
+    const series = (request.body?.series ?? '').trim();
+    if (!series) return reply.code(400).send({ error: 'Nome della serie mancante' });
+    const authors = Array.isArray(request.body?.authors)
+      ? request.body.authors.filter((author) => typeof author === 'string')
+      : [];
+    const isbns = Array.isArray(request.body?.isbns)
+      ? request.body.isbns.filter((isbn) => typeof isbn === 'string')
+      : [];
+    const ao3Urls = Array.isArray(request.body?.ao3Urls)
+      ? request.body.ao3Urls.filter((url) => typeof url === 'string')
+      : [];
+    const settings = await loadSettings();
+    try {
+      return await lookupSeries(series, authors, settings.providers, {
+        googleBooksApiKey: settings.googleBooksApiKey,
+        refresh: Boolean(request.body?.refresh),
+        refreshDays: settings.seriesRefreshDays,
+        isbns,
+        ao3Urls,
+        kind: request.body?.kind === 'fanfic' ? 'fanfic' : 'book',
+      });
+    } catch (error) {
+      return reply.code(502).send({ error: (error as Error).message });
+    }
+  });
+
+  // Lettura in blocco dalla cache, senza rete: serve a mostrare subito i mancanti.
+  app.post<{
+    Body: {
+      groups?: Array<{ series?: string; authors?: string[]; kind?: 'book' | 'fanfic' }>;
+    };
+  }>('/api/series/cached', async (request, reply) => {
+    const groups = request.body?.groups;
+    if (!Array.isArray(groups)) return reply.code(400).send({ error: 'Elenco delle serie mancante' });
+    if (groups.length > 500) return reply.code(400).send({ error: 'Troppe serie (massimo 500)' });
+    const settings = await loadSettings();
+    const results = await Promise.all(
+      groups.map((group) =>
+        readCachedSeries(
+          typeof group?.series === 'string' ? group.series : '',
+          Array.isArray(group?.authors)
+            ? group.authors.filter((author) => typeof author === 'string')
+            : [],
+          group?.kind === 'fanfic' ? 'fanfic' : 'book',
+          settings.seriesRefreshDays,
+        ),
+      ),
+    );
+    return { results };
+  });
+
+  app.get('/api/series/totals', async () => readSeriesTotals());
+
+  app.put<{ Body: { key?: string; total?: number | null } }>(
+    '/api/series/totals',
+    async (request, reply) => {
+      const total = request.body?.total;
+      if (total === undefined) return reply.code(400).send({ error: 'Totale mancante' });
+      try {
+        return await writeSeriesTotal(
+          typeof request.body?.key === 'string' ? request.body.key : '',
+          total === null ? null : Number(total),
+        );
+      } catch (error) {
+        return reply.code(400).send({ error: (error as Error).message });
+      }
+    },
+  );
+
+  app.post<{ Body: { dryRun?: boolean } }>(
+    '/api/apple-books/import',
+    async (request, reply) => {
+      try {
+        return await importAppleBooks({ dryRun: Boolean(request.body?.dryRun) });
+      } catch (error) {
+        return reply.code(400).send({ error: (error as Error).message });
+      }
+    },
+  );
+
+  app.post<{ Params: { id: string }; Body: { candidate: MetadataCandidate } }>(
+    '/api/books/:id/apply',
+    async (request, reply) => {
+      const candidate = request.body?.candidate;
+      if (!candidate) return reply.code(400).send({ error: 'Candidato mancante' });
+      try {
+        return await applyCandidate(request.params.id, candidate);
+      } catch (error) {
+        return reply.code(400).send({ error: (error as Error).message });
+      }
+    },
+  );
+
+  /* ----------------------------------------------------------- libreria -- */
+  /* --------------------------------------------------------------- EFP -- */
+  app.post<{ Body: { url?: string } }>('/api/efp/import', async (request, reply) => {
+    const url = request.body?.url?.trim();
+    if (!url) return reply.code(400).send({ error: 'Incolla il link di una storia EFP.' });
+    try {
+      const result = await importEfpStory(url);
+      await syncAppleBooksForBooks([result.book.id]);
+      const book = (await getBookMeta(result.book.id)) ?? result.book;
+      return {
+        book,
+        created: result.created,
+        chapters: result.story.chapters.length,
+        words: result.story.wordCount,
+      };
+    } catch (error) {
+      return reply.code(400).send({ error: (error as Error).message });
+    }
+  });
+
+  app.post<{ Body: { url?: string; format?: 'odt' | 'epub' } }>(
+    '/api/efp/download',
+    async (request, reply) => {
+      const url = request.body?.url?.trim();
+      if (!url) return reply.code(400).send({ error: 'Incolla il link di una storia EFP.' });
+      const format = request.body?.format === 'epub' ? 'epub' : 'odt';
+      try {
+        const story = await loadEfpStory(url);
+        const data = format === 'epub' ? await buildEpub(story) : await buildOdt(story);
+        const name = (story.title.replace(/[<>:"/\\|?*]/g, '-').trim() || 'storia-efp')
+          .slice(0, 100);
+        const filename = `${name}.${format}`;
+        return reply
+          .header(
+            'Content-Type',
+            format === 'epub' ? 'application/epub+zip' : 'application/vnd.oasis.opendocument.text',
+          )
+          .header('Content-Disposition', attachmentHeader(filename))
+          .header('Cache-Control', 'no-store')
+          .send(data);
+      } catch (error) {
+        return reply.code(400).send({ error: (error as Error).message });
+      }
+    },
+  );
+
+  app.post('/api/library/scan', async () => scanLibrary());
+
+  app.post<{ Body: { path?: string; force?: boolean; attachTo?: string } }>('/api/library/import', async (request, reply) => {
+    const requested = request.body?.path;
+    if (!requested || typeof requested !== 'string') return reply.code(400).send({ error: 'Percorso mancante' });
+    const guard = await guardImportPath(requested);
+    if ('error' in guard) return reply.code(403).send({ error: guard.error });
+    const target = guard.path;
+    try {
+      // Un file (o una cartella) che appartiene gia' a un libro non si reimporta:
+      // importFile lo sposterebbe nella cartella nuova, lasciando l'altro libro
+      // senza file. Per aggiornarne i dati c'e' «Rileggi i metadati dal file».
+      const settings = await loadSettings();
+      const relative = path.relative(path.resolve(settings.libraryRoot), path.resolve(target));
+      if (relative && !relative.startsWith('..') && !path.isAbsolute(relative)) {
+        const owner = (await loadIndex()).find(
+          (book) => relative === book.folder || relative.startsWith(book.folder + path.sep),
+        );
+        if (owner) {
+          return reply.code(400).send({
+            error: `Il file fa gia' parte della libreria («${owner.title}»). Per aggiornarlo usa «Rileggi i metadati dal file» nella sua scheda`,
+          });
+        }
+      }
+      const attachTo = request.body?.attachTo;
+      if (attachTo) {
+        // Il file diventa un'altra lingua di un libro esistente.
+        const book = await getBookMeta(attachTo);
+        if (!book) return reply.code(404).send({ error: 'Libro non trovato' });
+        const same = await findIdenticalFile(book, path.resolve(target));
+        if (same) {
+          return reply.code(409).send({
+            error: `Il file e' identico a «${same}», gia' presente nella scheda`,
+            duplicate: { reason: 'file', book: toSummary(book) },
+          });
+        }
+        return await attachEdition(attachTo, path.resolve(target));
+      }
+      if (!request.body?.force) {
+        const duplicate = await findDuplicate(target);
+        if (duplicate) {
+          return reply.code(409).send(duplicateReply(duplicate));
+        }
+      }
+      const meta = await importPath(target);
+      // Appena aggiunto, il libro recupera da Apple Books sottolineature, note
+      // e avanzamento: l'operazione non blocca l'import se Apple Books manca.
+      await syncAppleBooksForBooks([meta.id]);
+      return (await getBookMeta(meta.id)) ?? meta;
+    } catch (error) {
+      return reply.code(400).send({ error: (error as Error).message });
+    }
+  });
+
+  app.get('/api/library/folders', async () => {
+    const settings = await loadSettings();
+    try {
+      const entries = await fsp.readdir(settings.libraryRoot, { withFileTypes: true });
+      return entries
+        .filter((entry) => entry.isDirectory() && !entry.name.startsWith('.'))
+        .map((entry) => entry.name);
+    } catch {
+      return [];
+    }
+  });
+
+  /** Caricamento di un file dal browser: viene importato nella libreria. */
+  app.post<{ Querystring: { force?: string; attachTo?: string } }>(
+    '/api/library/upload',
+    async (request, reply) => {
+      const file = await request.file();
+      if (!file) return reply.code(400).send({ error: 'Nessun file ricevuto' });
+      const tempPath = await stageUpload(file.filename, await file.toBuffer());
+      try {
+        const attachTo = request.query?.attachTo;
+        if (attachTo) {
+          // Il file diventa un'altra lingua di un libro esistente.
+          const book = await getBookMeta(attachTo);
+          if (!book) return reply.code(404).send({ error: 'Libro non trovato' });
+          const same = await findIdenticalFile(book, tempPath);
+          if (same) {
+            return reply.code(409).send({
+              error: `Il file e' identico a «${same}», gia' presente nella scheda`,
+              duplicate: { reason: 'file', book: toSummary(book) },
+            });
+          }
+          return await attachEdition(attachTo, tempPath);
+        }
+        if (request.query?.force !== '1') {
+          const duplicate = await findDuplicate(tempPath);
+          if (duplicate) {
+            return reply.code(409).send(duplicateReply(duplicate));
+          }
+        }
+        const meta = await importPath(tempPath);
+        await syncAppleBooksForBooks([meta.id]);
+        return (await getBookMeta(meta.id)) ?? meta;
+      } catch (error) {
+        return reply.code(400).send({ error: (error as Error).message });
+      } finally {
+        await fsp.rm(tempPath, { force: true });
+      }
+    },
+  );
+
+  app.post<{ Body: { title?: string; authors?: string[]; kind?: 'book' | 'fanfic' } }>(
+    '/api/library/new',
+    async (request, reply) => {
+      const settings = await loadSettings();
+      const title = (request.body?.title ?? '').trim() || 'Senza titolo';
+      const authors = request.body?.authors ?? [];
+      const kind = request.body?.kind === 'fanfic' ? 'fanfic' : 'book';
+      const folderName = (authors.length ? `${authors.join(', ')} - ${title}` : title)
+        .replace(/[\\/:*?"<>|]/g, '-')
+        .trim();
+      const folderPath = path.join(settings.libraryRoot, folderName);
+      await fsp.mkdir(folderPath, { recursive: true });
+
+      const meta = emptyMeta();
+      meta.folder = path.relative(settings.libraryRoot, folderPath);
+      meta.title = title;
+      meta.authors = authors;
+      meta.kind = kind;
+      await writeBookJsonPublic(folderPath, meta);
+
+      const index = await loadIndex();
+      await saveIndex([...index.filter((b) => b.folder !== meta.folder), meta]);
+      await syncAppleBooksForBooks([meta.id]);
+      return (await getBookMeta(meta.id)) ?? meta;
+    },
+  );
+
+  app.get('/api/stats', async () => statsFor(await loadIndex()));
+}
+
+/** Campi che l'utente puo' modificare a mano. */
+function pickAllowed(body: Partial<BookMeta>): Partial<BookMeta> {
+  const allowed: (keyof BookMeta)[] = [
+    'title',
+    'subtitle',
+    'authors',
+    'series',
+    'seriesIndex',
+    'kind',
+    'publisher',
+    'publishedDate',
+    'language',
+    'isbn',
+    'identifiers',
+    'description',
+    'pageCount',
+    'wordCount',
+    'charCount',
+    'fandom',
+    'ships',
+    'characters',
+    'relationships',
+    'fanRating',
+    'tags',
+    'status',
+    'chapters',
+    'ao3Url',
+    'ffnetUrl',
+    'efpUrl',
+    'notes',
+    'rating',
+    'favorite',
+    'readingStatus',
+    'readingProgress',
+    'dateFinished',
+    'lastRead',
+    'folder',
+    'coverFile',
+    // `editions` ed `extraFiles` non ci sono: li gestisce solo il server.
+  ];
+  const result: Partial<BookMeta> = {};
+  for (const key of allowed) {
+    if (key in body) {
+      (result as Record<string, unknown>)[key] = body[key];
+    }
+  }
+  // Voto a mezze stelle fra 0,5 e 5; qualunque altro valore lo azzera.
+  if ('rating' in result) {
+    const rating = Number(result.rating);
+    result.rating =
+      result.rating == null || !Number.isFinite(rating) || rating <= 0
+        ? null
+        : Math.min(5, Math.max(0.5, Math.round(rating * 2) / 2));
+  }
+  if ('readingStatus' in result && !READING_STATUSES.includes(result.readingStatus as ReadingStatus)) {
+    delete result.readingStatus;
+  }
+  return result;
+}
+
+export function missingFields(book: BookMeta): string[] {
+  const missing: string[] = [];
+  if (!book.title) missing.push('title');
+  if (!book.authors.length) missing.push('authors');
+  if (!book.description) missing.push('description');
+  if (!book.publisher && book.kind === 'book') missing.push('publisher');
+  if (!book.publishedDate) missing.push('publishedDate');
+  if (!book.language) missing.push('language');
+  if (!book.isbn && book.kind === 'book') missing.push('isbn');
+  if (!book.coverFile) missing.push('cover');
+  if (book.kind === 'fanfic') {
+    if (!book.fandom) missing.push('fandom');
+    if (!book.fanRating) missing.push('fanRating');
+    if (!book.status) missing.push('status');
+    if (!book.wordCount) missing.push('wordCount');
+  }
+  return missing;
+}

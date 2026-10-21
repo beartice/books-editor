@@ -1,0 +1,692 @@
+import { create } from 'zustand';
+import { ApiError, api, setSetupRequiredHandler, setUnauthorizedHandler } from './api';
+import { cn, lengthOf, READING_STATUS_LABEL } from './utils';
+import type {
+  AppSettings,
+  BookMeta,
+  BookSummary,
+  LibraryStats,
+  LookupResult,
+  ReadingStatus,
+  SortKey,
+} from '@shared/types';
+
+export interface Filters {
+  kinds: string[];
+  formats: string[];
+  authors: string[];
+  fandoms: string[];
+  series: string[];
+  tags: string[];
+  readingStatus: string[];
+  favoritesOnly: boolean;
+  missingCover: boolean;
+  missingMetadata: boolean;
+}
+
+export const EMPTY_FILTERS: Filters = {
+  kinds: [],
+  formats: [],
+  authors: [],
+  fandoms: [],
+  series: [],
+  tags: [],
+  readingStatus: [],
+  favoritesOnly: false,
+  missingCover: false,
+  missingMetadata: false,
+};
+
+export interface Toast {
+  id: number;
+  message: string;
+  tone: 'info' | 'success' | 'error';
+  actions?: ToastAction[];
+}
+
+export interface ToastAction {
+  label: string;
+  value: string;
+  primary?: boolean;
+}
+
+export type QuickFilter = 'all' | 'books' | 'fanfic' | 'favorites' | 'unread';
+
+export function matchesQuickFilter(filters: Filters, quick: QuickFilter): boolean {
+  const emptyArrays =
+    filters.formats.length === 0 &&
+    filters.authors.length === 0 &&
+    filters.fandoms.length === 0 &&
+    filters.series.length === 0 &&
+    filters.tags.length === 0;
+
+  switch (quick) {
+    case 'all':
+      return (
+        emptyArrays &&
+        filters.kinds.length === 0 &&
+        filters.readingStatus.length === 0 &&
+        !filters.favoritesOnly &&
+        !filters.missingCover &&
+        !filters.missingMetadata
+      );
+    case 'books':
+      return (
+        emptyArrays &&
+        filters.kinds.length === 1 &&
+        filters.kinds[0] === 'book' &&
+        filters.readingStatus.length === 0 &&
+        !filters.favoritesOnly &&
+        !filters.missingCover &&
+        !filters.missingMetadata
+      );
+    case 'fanfic':
+      return (
+        emptyArrays &&
+        filters.kinds.length === 1 &&
+        filters.kinds[0] === 'fanfic' &&
+        filters.readingStatus.length === 0 &&
+        !filters.favoritesOnly &&
+        !filters.missingCover &&
+        !filters.missingMetadata
+      );
+    case 'favorites':
+      return (
+        emptyArrays &&
+        filters.kinds.length === 0 &&
+        filters.readingStatus.length === 0 &&
+        filters.favoritesOnly &&
+        !filters.missingCover &&
+        !filters.missingMetadata
+      );
+    case 'unread':
+      return (
+        emptyArrays &&
+        filters.kinds.length === 0 &&
+        filters.readingStatus.length === 1 &&
+        filters.readingStatus[0] === 'unread' &&
+        !filters.favoritesOnly &&
+        !filters.missingCover &&
+        !filters.missingMetadata
+      );
+  }
+}
+
+interface State {
+  books: BookSummary[];
+  stats: LibraryStats | null;
+  settings: AppSettings | null;
+  loading: boolean;
+  busy: boolean;
+  query: string;
+  sort: { key: SortKey; asc: boolean };
+  view: 'grid' | 'list';
+  filters: Filters;
+  selectedId: string | null;
+  detail: BookMeta | null;
+  detailTab: 'details' | 'highlights' | 'cover' | 'online';
+  lookup: LookupResult | null;
+  lookupLoading: boolean;
+  /** true dopo il primo tentativo di ricerca: evita cicli automatici. */
+  lookupAttempted: boolean;
+  /** Finestra delle impostazioni aperta (può essere aperta anche dal dettaglio). */
+  settingsOpen: boolean;
+  toasts: Toast[];
+  /** Autenticazione: stato verificato con /auth/me, login richiesto, messaggio per la pagina di login. */
+  authChecked: boolean;
+  authEnabled: boolean;
+  authRequired: boolean;
+  authMessage: string;
+  /** Primo avvio: nessun account, mostra la pagina di creazione. */
+  setupRequired: boolean;
+  setupCodeRequired: boolean;
+  setupLibraryRoot: string | null;
+  setupLibraryRootLocked: boolean;
+  credentialsSource: 'env' | 'file' | null;
+  authUser: string | null;
+
+  checkAuth: () => Promise<void>;
+  loggedIn: () => Promise<void>;
+  logout: () => Promise<void>;
+  load: () => Promise<void>;
+  setQuery: (query: string) => void;
+  setSort: (key: SortKey) => void;
+  setView: (view: 'grid' | 'list') => void;
+  toggleFilter: (group: keyof Filters, value: string) => void;
+  setFlagFilter: (flag: keyof Filters, value: boolean) => void;
+  setQuickFilter: (quick: QuickFilter) => void;
+  clearFilters: () => void;
+  select: (id: string | null) => Promise<void>;
+  setDetailTab: (tab: 'details' | 'highlights' | 'cover' | 'online') => void;
+  setSettingsOpen: (open: boolean) => void;
+  patchDetail: (patch: Partial<BookMeta>) => Promise<void>;
+  runLookup: () => Promise<void>;
+  importGoogleVolume: (url: string) => Promise<boolean>;
+  importAo3: (url: string) => Promise<boolean>;
+  applyCandidate: (candidate: Parameters<typeof api.apply>[1]) => Promise<void>;
+  reloadBook: (id: string) => Promise<void>;
+  scan: () => Promise<void>;
+  toast: (message: string, tone?: Toast['tone']) => void;
+  dismissToast: (id: number) => void;
+  answerToast: (id: number, value: string) => void;
+  confirm: (message: string, actions: ToastAction[]) => Promise<string | null>;
+  setSettings: (settings: Partial<AppSettings>) => Promise<void>;
+}
+
+let toastId = 0;
+// Funzioni di risoluzione delle notifiche con azioni (fuori dallo stato).
+const toastResolvers = new Map<number, (value: string | null) => void>();
+
+function matchesQuery(book: BookSummary, query: string): boolean {
+  if (!query) return true;
+  const needle = query.toLowerCase().trim();
+  const haystack = [
+    book.title,
+    book.subtitle,
+    book.authors.join(' '),
+    book.series,
+    book.fandom,
+    book.tags.join(' '),
+    book.publisher,
+    book.description,
+    book.isbn,
+  ]
+    .join(' ')
+    .toLowerCase();
+  return needle.split(/\s+/).every((token) => haystack.includes(token));
+}
+
+function matchesFilters(book: BookSummary, filters: Filters): boolean {
+  if (filters.kinds.length && !filters.kinds.includes(book.kind)) return false;
+  if (filters.formats.length && !filters.formats.includes(book.format)) return false;
+  if (filters.authors.length && !book.authors.some((a) => filters.authors.includes(a))) return false;
+  if (filters.fandoms.length && !filters.fandoms.includes(book.fandom)) return false;
+  if (filters.series.length && !filters.series.includes(book.series)) return false;
+  if (filters.tags.length && !book.tags.some((t) => filters.tags.includes(t))) return false;
+  if (filters.readingStatus.length && !filters.readingStatus.includes(book.readingStatus)) return false;
+  if (filters.favoritesOnly && !book.favorite) return false;
+  if (filters.missingCover && book.coverFile) return false;
+  if (filters.missingMetadata && book.authors.length && book.description) return false;
+  return true;
+}
+
+export function selectVisible(state: {
+  books: BookSummary[];
+  query: string;
+  filters: Filters;
+  sort: { key: SortKey; asc: boolean };
+}): BookSummary[] {
+  const filtered = state.books.filter(
+    (book) => matchesQuery(book, state.query) && matchesFilters(book, state.filters),
+  );
+
+  const { key, asc } = state.sort;
+  const direction = asc ? 1 : -1;
+  const collator = new Intl.Collator('it', { sensitivity: 'base', numeric: true });
+
+  filtered.sort((a, b) => {
+    let result = 0;
+    switch (key) {
+      case 'author':
+        result = collator.compare(a.authors[0] ?? '', b.authors[0] ?? '');
+        break;
+      case 'series':
+        result = collator.compare(a.series || '￿', b.series || '￿');
+        if (result === 0) result = (a.seriesIndex ?? 0) - (b.seriesIndex ?? 0);
+        break;
+      case 'length':
+        result = lengthOf(a) - lengthOf(b);
+        break;
+      case 'rating':
+        result = (a.rating ?? -1) - (b.rating ?? -1);
+        break;
+      case 'publishedDate':
+        result = (a.publishedDate || '').localeCompare(b.publishedDate || '');
+        break;
+      case 'dateAdded':
+        result = a.dateAdded.localeCompare(b.dateAdded);
+        break;
+      case 'dateModified':
+        result = a.dateAdded.localeCompare(b.dateAdded);
+        break;
+      case 'lastRead':
+        result = (a.lastRead || '').localeCompare(b.lastRead || '');
+        break;
+      case 'dateFinished':
+        result = (a.dateFinished || '').localeCompare(b.dateFinished || '');
+        break;
+      case 'readingProgress':
+        result = (a.readingProgress ?? -1) - (b.readingProgress ?? -1);
+        break;
+      case 'fandom':
+        result = collator.compare(a.fandom || '￿', b.fandom || '￿');
+        break;
+      default:
+        result = collator.compare(a.title, b.title);
+    }
+    if (result === 0) result = collator.compare(a.title, b.title);
+    return result * direction;
+  });
+
+  return filtered;
+}
+
+export const useStore = create<State>((set, get) => ({
+  books: [],
+  stats: null,
+  settings: null,
+  loading: true,
+  busy: false,
+  query: '',
+  sort: { key: 'title', asc: true },
+  view: 'grid',
+  filters: { ...EMPTY_FILTERS },
+  selectedId: null,
+  detail: null,
+  detailTab: 'details',
+  lookup: null,
+  lookupLoading: false,
+  lookupAttempted: false,
+  settingsOpen: false,
+  toasts: [],
+  authChecked: false,
+  authEnabled: false,
+  authRequired: false,
+  authMessage: '',
+  setupRequired: false,
+  setupCodeRequired: false,
+  setupLibraryRoot: null,
+  setupLibraryRootLocked: false,
+  credentialsSource: null,
+  authUser: null,
+
+  checkAuth: async () => {
+    try {
+      const status = await api.authMe();
+      set({
+        authChecked: true,
+        authEnabled: status.authEnabled,
+        authRequired: status.authEnabled && !status.authenticated && !status.setupRequired,
+        setupRequired: status.setupRequired,
+        setupCodeRequired: status.setupCodeRequired,
+        setupLibraryRoot: status.setupLibraryRoot ?? null,
+        setupLibraryRootLocked: status.setupLibraryRootLocked ?? false,
+        credentialsSource: status.credentialsSource,
+        authUser: status.user,
+      });
+      if (!status.setupRequired && (!status.authEnabled || status.authenticated)) await get().load();
+    } catch (error) {
+      set({ authChecked: true });
+      get().toast((error as Error).message, 'error');
+    }
+  },
+  loggedIn: async () => {
+    // Ricarica lo stato (utente, origine delle credenziali) prima della libreria.
+    set({ authRequired: false, setupRequired: false, authMessage: '' });
+    await get().checkAuth();
+  },
+  logout: async () => {
+    try {
+      await api.logout();
+    } catch {
+      /* in ogni caso si torna al login */
+    }
+    set({
+      authRequired: true,
+      authMessage: '',
+      books: [],
+      selectedId: null,
+      detail: null,
+      settingsOpen: false,
+    });
+  },
+
+  load: async () => {
+    set({ loading: true });
+    try {
+      const [{ books, stats }, settings] = await Promise.all([api.books(), api.settings()]);
+      set({ books, stats, settings, loading: false });
+    } catch (error) {
+      set({ loading: false });
+      // Con 401 compare gia' la pagina di login.
+      if (!(error instanceof ApiError && error.status === 401)) {
+        get().toast((error as Error).message, 'error');
+      }
+    }
+  },
+
+  setQuery: (query) => set({ query }),
+  setSort: (key) =>
+    set((state) => ({
+      sort: state.sort.key === key ? { key, asc: !state.sort.asc } : { key, asc: true },
+    })),
+  setView: (view) => {
+    const url = new URL(window.location.href);
+    url.searchParams.set('view', view);
+    window.history.replaceState({}, '', url);
+    set({ view });
+  },
+
+  toggleFilter: (group, value) =>
+    set((state) => {
+      const current = state.filters[group] as string[];
+      const next = current.includes(value)
+        ? current.filter((item) => item !== value)
+        : [...current, value];
+      return { filters: { ...state.filters, [group]: next } };
+    }),
+
+  setFlagFilter: (flag, value) =>
+    set((state) => ({ filters: { ...state.filters, [flag]: value } })),
+
+  setQuickFilter: (quick) =>
+    set(() => {
+      const next: Filters = { ...EMPTY_FILTERS };
+      if (quick === 'books') next.kinds = ['book'];
+      if (quick === 'fanfic') next.kinds = ['fanfic'];
+      if (quick === 'favorites') next.favoritesOnly = true;
+      if (quick === 'unread') next.readingStatus = ['unread'];
+      return { filters: next };
+    }),
+
+  clearFilters: () => set({ filters: { ...EMPTY_FILTERS }, query: '' }),
+
+  select: async (id) => {
+    const url = new URL(window.location.href);
+    if (id) url.searchParams.set('book', id);
+    else url.searchParams.delete('book');
+    window.history.replaceState({}, '', url);
+
+    if (!id) {
+      set({ selectedId: null, detail: null, lookup: null, lookupAttempted: false });
+      return;
+    }
+    const tab = new URLSearchParams(window.location.search).get('tab');
+    set({
+      selectedId: id,
+      detail: null,
+      lookup: null,
+      lookupAttempted: false,
+      detailTab:
+        tab === 'cover' || tab === 'online' || tab === 'highlights' ? tab : 'details',
+    });
+    try {
+      const detail = await api.book(id);
+      set({ detail });
+    } catch (error) {
+      get().toast((error as Error).message, 'error');
+    }
+  },
+
+  setDetailTab: (detailTab) => {
+    const url = new URL(window.location.href);
+    url.searchParams.set('tab', detailTab);
+    window.history.replaceState({}, '', url);
+    set({ detailTab });
+  },
+
+  setSettingsOpen: (settingsOpen) => set({ settingsOpen }),
+
+  patchDetail: async (patch) => {
+    const { detail } = get();
+    if (!detail) return;
+    set({ busy: true });
+    try {
+      const updated = await api.updateBook(detail.id, patch);
+      set((state) => ({
+        detail: updated,
+        busy: false,
+        books: state.books.map((book) =>
+          book.id === updated.id
+            ? {
+                ...book,
+                title: updated.title,
+                subtitle: updated.subtitle,
+                authors: updated.authors,
+                series: updated.series,
+                seriesIndex: updated.seriesIndex,
+                kind: updated.kind,
+                coverFile: updated.coverFile,
+                fandom: updated.fandom,
+                tags: updated.tags,
+                rating: updated.rating,
+                fanRating: updated.fanRating,
+                status: updated.status,
+                wordCount: updated.wordCount,
+                pageCount: updated.pageCount,
+                publishedDate: updated.publishedDate,
+                readingStatus: updated.readingStatus,
+                readingProgress: updated.readingProgress,
+                dateFinished: updated.dateFinished,
+                favorite: updated.favorite,
+                publisher: updated.publisher,
+                language: updated.language,
+                isbn: updated.isbn,
+                ao3Url: updated.ao3Url,
+              }
+            : book,
+        ),
+      }));
+    } catch (error) {
+      set({ busy: false });
+      get().toast((error as Error).message, 'error');
+    }
+  },
+
+  runLookup: async () => {
+    const { detail } = get();
+    if (!detail) return;
+    set({ lookupLoading: true, lookup: null, lookupAttempted: true });
+    try {
+      const lookup = await api.lookup(detail.id);
+      set({ lookup, lookupLoading: false });
+    } catch (error) {
+      const message = (error as Error).message;
+      set({
+        lookupLoading: false,
+        lookup: { candidates: [], missing: [], errors: [message] },
+      });
+      get().toast(message, 'error');
+    }
+  },
+
+  importGoogleVolume: async (url) => {
+    const { detail, lookup } = get();
+    if (!detail || !url.trim()) return false;
+    set({ busy: true });
+    try {
+      const result = await api.lookupGoogle(detail.id, url.trim());
+      const incoming = result.candidates[0];
+      const existing = lookup?.candidates ?? [];
+      const rest = incoming
+        ? existing.filter(
+            (candidate) =>
+              candidate.provider !== 'googlebooks' ||
+              candidate.fields.identifiers?.googlebooks !==
+                incoming.fields.identifiers?.googlebooks,
+          )
+        : existing;
+      set({
+        busy: false,
+        lookupAttempted: true,
+        lookup: {
+          candidates: incoming ? [incoming, ...rest] : existing,
+          errors: [],
+          missing: result.missing,
+        },
+      });
+      if (incoming) get().toast('Edizione Google Books importata', 'success');
+      return Boolean(incoming);
+    } catch (error) {
+      set({ busy: false });
+      get().toast((error as Error).message, 'error');
+      return false;
+    }
+  },
+
+  importAo3: async (url) => {
+    const { detail, lookup } = get();
+    if (!detail || !url.trim()) return false;
+    set({ busy: true });
+    try {
+      const result = await api.lookupAo3(detail.id, url.trim());
+      const incoming = result.candidates[0];
+      const existing = lookup?.candidates ?? [];
+      const rest = incoming
+        ? existing.filter((candidate) => candidate.provider !== 'ao3')
+        : existing;
+      set({
+        busy: false,
+        lookupAttempted: true,
+        lookup: {
+          candidates: incoming ? [incoming, ...rest] : existing,
+          errors: [],
+          missing: result.missing,
+        },
+      });
+      if (incoming) get().toast('Metadati AO3 importati', 'success');
+      return Boolean(incoming);
+    } catch (error) {
+      set({ busy: false });
+      get().toast((error as Error).message, 'error');
+      return false;
+    }
+  },
+
+  applyCandidate: async (candidate) => {
+    const { detail } = get();
+    if (!detail) return;
+    set({ busy: true });
+    try {
+      const updated = await api.apply(detail.id, candidate);
+      set({ detail: updated, busy: false, lookup: null });
+      await get().reloadBook(updated.id);
+      get().toast('Metadati aggiornati', 'success');
+    } catch (error) {
+      set({ busy: false });
+      get().toast((error as Error).message, 'error');
+    }
+  },
+
+  reloadBook: async (id) => {
+    try {
+      const [detail, { books }] = await Promise.all([api.book(id), api.books()]);
+      set((state) => ({
+        detail: state.selectedId === id ? detail : state.detail,
+        books,
+      }));
+    } catch (error) {
+      get().toast((error as Error).message, 'error');
+    }
+  },
+
+  scan: async () => {
+    set({ busy: true });
+    try {
+      const result = await api.scan();
+      const { books, stats } = await api.books();
+      set({ books, stats, busy: false });
+      const parts = [`${result.added} nuovi`, `${result.updated} aggiornati`];
+      if (result.removed) parts.push(`${result.removed} rimossi`);
+      get().toast(`Scansione completata: ${parts.join(', ')}`, 'success');
+      if (result.errors.length) {
+        get().toast(`${result.errors.length} errori durante la scansione`, 'error');
+      }
+    } catch (error) {
+      set({ busy: false });
+      get().toast((error as Error).message, 'error');
+    }
+  },
+
+  toast: (message, tone = 'info') => {
+    const id = ++toastId;
+    set((state) => ({ toasts: [...state.toasts, { id, message, tone }] }));
+    setTimeout(() => get().dismissToast(id), 4200);
+  },
+
+  dismissToast: (id) => {
+    // Una notifica con azioni chiusa senza scelta risolve con null.
+    const resolve = toastResolvers.get(id);
+    if (resolve) {
+      toastResolvers.delete(id);
+      resolve(null);
+    }
+    set((state) => ({ toasts: state.toasts.filter((t) => t.id !== id) }));
+  },
+
+  answerToast: (id, value) => {
+    const resolve = toastResolvers.get(id);
+    toastResolvers.delete(id);
+    resolve?.(value);
+    set((state) => ({ toasts: state.toasts.filter((t) => t.id !== id) }));
+  },
+
+  confirm: (message, actions) =>
+    new Promise<string | null>((resolve) => {
+      const id = ++toastId;
+      toastResolvers.set(id, resolve);
+      set((state) => ({
+        toasts: [...state.toasts, { id, message, tone: 'info', actions }],
+      }));
+    }),
+
+  setSettings: async (patch) => {
+    set({ busy: true });
+    try {
+      const settings = await api.updateSettings(patch);
+      set({ settings, busy: false });
+      get().toast('Impostazioni salvate', 'success');
+    } catch (error) {
+      set({ busy: false });
+      get().toast((error as Error).message, 'error');
+    }
+  },
+}));
+
+/** Etichette leggibili per i filtri laterali. */
+export function describeFilter(group: keyof Filters, value: string): string {
+  switch (group) {
+    case 'kinds':
+      return value === 'fanfic' ? 'Fanfiction' : 'Libri';
+    case 'formats':
+      return value.toUpperCase();
+    case 'readingStatus':
+      return READING_STATUS_LABEL[value as ReadingStatus] ?? value;
+    default:
+      return value;
+  }
+}
+
+export function toggleArrayFilter(
+  filters: Filters,
+  group: keyof Filters,
+  value: string,
+): Filters {
+  const current = filters[group] as string[];
+  return {
+    ...filters,
+    [group]: current.includes(value)
+      ? current.filter((item) => item !== value)
+      : [...current, value],
+  };
+}
+
+export const filterClasses = (active: boolean) =>
+  cn(
+    'w-full truncate rounded-md px-2 py-1 text-left text-[13px] transition',
+    active
+      ? 'bg-accent-500/10 font-medium text-accent-700'
+      : 'text-ink-400 hover:bg-black/[0.035] hover:text-ink-100',
+  );
+
+// Una risposta 401 da qualunque chiamata riporta alla pagina di login.
+setSetupRequiredHandler(() => {
+  if (useStore.getState().setupRequired) return;
+  useStore.setState({ authEnabled: true, authRequired: false, setupRequired: true, books: [], selectedId: null, detail: null });
+  void useStore.getState().checkAuth();
+});
+
+setUnauthorizedHandler(() => {
+  if (useStore.getState().authRequired) return;
+  useStore.setState({ authEnabled: true, authRequired: true, authMessage: 'Sessione scaduta, accedi di nuovo' });
+});

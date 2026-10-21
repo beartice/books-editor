@@ -1,0 +1,51 @@
+services:
+  libreria:
+    build: .
+    image: books-editor:latest
+    container_name: libreria
+    restart: unless-stopped
+    ports:
+      # BIND_ADDRESS: indirizzo su cui ascolta l'app. Il default (solo host)
+      # va bene con nginx sulla stessa macchina; se il reverse proxy sta su
+      # un'altra macchina metti l'IP LAN del server (vedi deploy/nginx).
+      - "${BIND_ADDRESS:-127.0.0.1}:8787:8787"
+    # Irrigidimento del container: file system in sola lettura, nessun
+    # privilegio, nessuna capability. L'app scrive solo nei volumi e in /tmp.
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    # Limite di memoria: l'import EFP e la lettura degli EPUB grandi possono
+    # essere pesanti, 1 GB evita che un picco saturi il server.
+    mem_limit: 1g
+    environment:
+      NODE_ENV: production
+      # nginx sull'host raggiunge il container dal gateway della rete bridge
+      # (rete privata): serve uniquelocal oltre a loopback. Con un proxy su
+      # un'altra macchina metti il suo IP (non uniquelocal: qualunque
+      # dispositivo della LAN potrebbe falsificare X-Forwarded-For).
+      TRUST_PROXY: ${TRUST_PROXY:-loopback,uniquelocal}
+      # Autenticazione: i valori stanno in .env (vedi .env.example per i `$`).
+      AUTH_USER: ${AUTH_USER:-}
+      AUTH_PASS_HASH: ${AUTH_PASS_HASH:-}
+      SESSION_SECRET: ${SESSION_SECRET:-}
+      SESSION_DAYS: ${SESSION_DAYS:-30}
+      # Cartelle consentite per «Importa da percorso» (vuoto = disattivato).
+      IMPORT_ROOTS: ${IMPORT_ROOTS:-}
+      # L'app e' same-origin: lascia vuoto.
+      CORS_ORIGINS: ${CORS_ORIGINS:-}
+      # Chiave opzionale per Google Books (rimuove il limite di richieste).
+      GOOGLE_BOOKS_API_KEY: ${GOOGLE_BOOKS_API_KEY:-}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    volumes:
+      # La libreria (epub, copertine, book.json) vive qui. LIBRARY_PATH la
+      # sposta, ad esempio su un disco dedicato.
+      - "${LIBRARY_PATH:-./library}:/app/library"
+      # Indice e impostazioni. DATA_PATH la sposta.
+      - "${DATA_PATH:-./data}:/app/data"
+      # Facoltativo: cartella da cui «Importa da percorso». Se la attivi,
+      # imposta anche IMPORT_ROOTS=/import nel .env.
+      # - ./import:/import:ro

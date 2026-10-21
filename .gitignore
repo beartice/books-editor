@@ -1,0 +1,26 @@
+node_modules/
+dist/
+data/
+library/*
+!library/.gitkeep
+.env
+.DS_Store
+*.log
+.vscode/
+.idea/
+
+# Parametri del proprio server (vedi deploy/target.env.example)
+deploy/target.env
+
+# Configurazione personale, non pubblicata: topologia del proprio server,
+# agenti di deploy e impostazioni locali di Claude Code.
+AGENTS.local.md
+deploy/nginx/*.conf
+!deploy/nginx/books-editor-ratelimit.conf
+deploy/production.env.example
+deploy/target.env.example
+.claude/*
+!.claude/agents/
+.claude/agents/*
+!.claude/agents/sonnet-coder.md
+!.claude/agents/haiku-ops.md
