@@ -1,0 +1,59 @@
+{
+  "name": "books-editor-desktop",
+  "productName": "Books Editor",
+  "version": "1.0.0",
+  "private": true,
+  "description": "App per Mac di Books Editor: apre il server e aggiunge le funzioni di Apple Books.",
+  "author": "Books Editor",
+  "license": "GPL-3.0-or-later",
+  "engines": {
+    "node": ">=22.12"
+  },
+  "main": "dist/main.js",
+  "scripts": {
+    "build": "node build.mjs",
+    "start": "npm run build && env -u ELECTRON_RUN_AS_NODE electron .",
+    "dist": "npm run build && electron-builder --mac dmg --arm64",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@napi-rs/canvas": "^0.1.100"
+  },
+  "devDependencies": {
+    "@types/adm-zip": "^0.5.7",
+    "@types/node": "^22.10.2",
+    "adm-zip": "^0.5.16",
+    "electron": "^45.0.0",
+    "electron-builder": "^26.0.0",
+    "esbuild": "^0.28.0",
+    "fast-xml-parser": "^4.5.1",
+    "typescript": "^5.7.2"
+  },
+  "build": {
+    "appId": "io.github.books-editor",
+    "productName": "Books Editor",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "package.json"
+    ],
+    "mac": {
+      "category": "public.app-category.productivity",
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "arm64"
+          ]
+        }
+      ],
+      "identity": "-",
+      "hardenedRuntime": false
+    },
+    "dmg": {
+      "title": "Books Editor"
+    }
+  }
+}

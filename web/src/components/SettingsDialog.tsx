@@ -3,6 +3,7 @@ import type { FormEvent } from 'react';
 import { useStore } from '../store';
 import { ApiError, api } from '../api';
 import type { AppleBooksImportResult } from '@shared/types';
+import { desktop, importAppleBooksViaApp } from '../desktop';
 import { IconClose, IconFolder, IconLogout } from './icons';
 
 interface Props {
@@ -29,7 +30,16 @@ export default function SettingsDialog({ onClose }: Props) {
   const [appleBusy, setAppleBusy] = useState(false);
   const [appleResult, setAppleResult] = useState<AppleBooksImportResult | null>(null);
   const [appleError, setAppleError] = useState('');
+  // null = non ancora noto; local = il server legge Apple Books da se' (stesso Mac).
+  const [appleLocal, setAppleLocal] = useState<boolean | null>(null);
   const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    api
+      .appleBooksCapabilities()
+      .then((caps) => setAppleLocal(caps.local))
+      .catch(() => setAppleLocal(false));
+  }, []);
 
   useEffect(() => {
     if (settings) {
@@ -108,7 +118,8 @@ export default function SettingsDialog({ onClose }: Props) {
     setAppleError('');
     setAppleResult(null);
     try {
-      const result = await api.importAppleBooks();
+      // Server in locale sul Mac: legge lui. Altrimenti lo fa l'app per Mac e invia i dati.
+      const result = appleLocal ? await api.importAppleBooks() : await importAppleBooksViaApp();
       setAppleResult(result);
       const selected = useStore.getState().selectedId;
       if (selected) await useStore.getState().reloadBook(selected);
@@ -374,7 +385,9 @@ export default function SettingsDialog({ onClose }: Props) {
           <div className="rounded-lg border border-black/[0.06] bg-ink-800 p-3">
             <div className="mb-1 flex items-center justify-between gap-2">
               <span className="field-label !mb-0">Sottolineature da Apple Books</span>
-              <span className="chip border-black/[0.08] text-ink-400">solo macOS</span>
+              <span className="chip border-black/[0.08] text-ink-400">
+                {appleLocal === false && !desktop() ? 'app per Mac' : 'solo macOS'}
+              </span>
             </div>
             <p className="text-[11px] leading-relaxed text-ink-500">
               Legge le evidenziazioni e le note dal database locale di Libri e le salva
@@ -384,11 +397,16 @@ export default function SettingsDialog({ onClose }: Props) {
             <button
               type="button"
               onClick={importApple}
-              disabled={appleBusy}
-              className="btn-ghost mt-2 text-[12px]"
+              disabled={appleBusy || appleLocal === null || (!appleLocal && !desktop())}
+              className="btn-ghost mt-2 text-[12px] disabled:opacity-60"
             >
               {appleBusy ? 'Lettura in corso…' : 'Importa da Apple Books'}
             </button>
+            {appleLocal === false && !desktop() && (
+              <p className="mt-2 text-[11px] leading-relaxed text-ink-500">
+                Disponibile nell’app per Mac (vedi il README del progetto).
+              </p>
+            )}
             {appleError && (
               <p className="mt-2 text-[11px] leading-relaxed text-rose-600">{appleError}</p>
             )}

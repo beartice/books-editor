@@ -168,6 +168,39 @@ export interface BookHighlight {
   modifiedAt: string;
 }
 
+/** Riga grezza della tabella delle annotazioni di Apple Books. */
+export interface AppleAnnotationRow {
+  uuid?: string | null;
+  assetId?: string | null;
+  text?: string | null;
+  note?: string | null;
+  location?: string | null;
+  style?: number | string | null;
+  underline?: number | string | null;
+  createdAt?: number | string | null;
+  modifiedAt?: number | string | null;
+}
+
+/** Riga grezza della libreria di Apple Books. */
+export interface AppleLibraryRow {
+  assetId?: string | null;
+  title?: string | null;
+  sortTitle?: string | null;
+  author?: string | null;
+  sortAuthor?: string | null;
+  /** Data di fine lettura (timestamp Core Data). */
+  finishedAt?: number | string | null;
+  /** Avanzamento di lettura da 0 a 1. */
+  readingProgress?: number | string | null;
+}
+
+/** Dati letti da Apple Books sul Mac, prima dell'abbinamento con la libreria. */
+export interface AppleBooksRawData {
+  database: string;
+  annotations: AppleAnnotationRow[];
+  library: AppleLibraryRow[];
+}
+
 export interface AppleBooksUnmatched {
   assetId: string;
   title: string;

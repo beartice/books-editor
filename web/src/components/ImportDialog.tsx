@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { api, ApiError, tooLargeMessage } from '../api';
 import type { JellyfinImportState, JellyfinLibrary, JellyfinPreview } from '../api';
 import type { BookMeta, BookSummary } from '@shared/types';
+import { syncAppleBooksFromApp } from '../desktop';
 import { libraryNameOf, useStore } from '../store';
 import { cn, languageLabel } from '../utils';
 import { IconClose, IconUpload } from './icons';
@@ -60,6 +61,7 @@ export default function ImportDialog({ onClose }: Props) {
           setJfJob(state);
           if (state.running) return;
           await load();
+          void syncAppleBooksFromApp(state.imported.map((item) => item.id));
           toast(
             `Importati ${state.imported.length}, aggiunte come altra lingua ${state.editions?.length ?? 0}, duplicati scartati ${state.duplicates.length}, errori ${state.errors.length}`,
             state.errors.length ? 'error' : 'success',
@@ -165,9 +167,10 @@ export default function ImportDialog({ onClose }: Props) {
     try {
       let options: { force?: boolean; attachTo?: string } = {};
       let attachedLanguage = '';
+      let imported: BookMeta | null = null;
       while (true) {
         try {
-          await action(options);
+          imported = await action(options);
           break;
         } catch (error) {
           // Durante l'attesa della conferma la finestra non resta occupata.
@@ -181,6 +184,7 @@ export default function ImportDialog({ onClose }: Props) {
         }
       }
       await load();
+      if (imported) void syncAppleBooksFromApp([imported.id]);
       toast(attachedLanguage ? `Aggiunto come ${attachedLanguage}` : 'Opera importata', 'success');
       onClose();
     } catch (error) {
@@ -211,6 +215,7 @@ export default function ImportDialog({ onClose }: Props) {
     try {
       const result = await api.importEfp(value);
       await load();
+      void syncAppleBooksFromApp([result.book.id]);
       toast(
         `${result.created ? 'Importata' : 'Aggiornata'} "${result.book.title}" · ${result.chapters} capitoli`,
         'success',

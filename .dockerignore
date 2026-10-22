@@ -1,0 +1,11 @@
+# Il contesto di build contiene solo il necessario: niente app per Mac, dati o dipendenze locali.
+desktop/
+**/node_modules
+**/dist
+data/
+library/
+librerie/
+.git
+.claude
+deploy/target.env
+.env

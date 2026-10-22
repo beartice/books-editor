@@ -18,6 +18,7 @@ import HighlightsTab from './HighlightsTab';
 import LanguagesSection from './LanguagesSection';
 import MoveBookMenu from './MoveBookMenu';
 import AppleBooksDialog from './AppleBooksDialog';
+import { desktop, unwrap } from '../desktop';
 import {
   IconClose,
   IconCloud,
@@ -271,6 +272,8 @@ export default function DetailPanel({
   const [sharing, setSharing] = useState<string | null>(null);
   const [shareRetry, setShareRetry] = useState<{ key: string; file: string } | null>(null);
   const shareMenuRef = useRef<HTMLDivElement>(null);
+  // App per Mac: file in preparazione per «Apri in Libri».
+  const [openingBooks, setOpeningBooks] = useState<string | null>(null);
   const shareCache = useRef(new Map<string, { file: File; original: boolean }>());
   // Aprendo la scheda "Metadati online" la ricerca parte da sola.
   useEffect(() => {
@@ -296,8 +299,12 @@ export default function DetailPanel({
     setAppleStatus(null);
     if (!detailId || !appleId) return;
     let cancelled = false;
-    api
-      .appleBooksStatus(detailId)
+    // Nell'app per Mac lo stato viene dal ponte (Apple Books e' sul Mac); nel browser dal server.
+    const bridge = desktop();
+    (bridge && detail
+      ? bridge.appleBooksStatus(detail).then(unwrap)
+      : api.appleBooksStatus(detailId)
+    )
       .then((status) => {
         if (!cancelled) setAppleStatus(status);
       })
@@ -305,6 +312,7 @@ export default function DetailPanel({
     return () => {
       cancelled = true;
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [detailId, appleId]);
 
   // Menu delle lingue: si chiude con un clic fuori o con Esc (che non chiude il pannello).
@@ -421,6 +429,30 @@ export default function DetailPanel({
   };
   const shareFiles = (meta.format === 'epub' && meta.sourceFile ? [meta.sourceFile, ...editions.map((e) => e.file)] : [])
     .filter((file, index, all) => file.toLowerCase().endsWith('.epub') && all.indexOf(file) === index);
+
+  // App per Mac: scarica l'EPUB con i metadati della scheda e lo passa a Libri.
+  const handleOpenInBooksApp = async (file: string) => {
+    const bridge = desktop();
+    if (!bridge) return;
+    setOpeningBooks(file);
+    try {
+      const { blob, filename, metadata } = await api.downloadBook(
+        meta.id,
+        file === meta.sourceFile ? undefined : file,
+        { meta: true },
+      );
+      unwrap(await bridge.openInBooks({ data: await blob.arrayBuffer(), filename }));
+      if (metadata === 'original') {
+        useStore
+          .getState()
+          .toast("Aperto il file originale: non e' stato possibile scrivere i metadati della scheda", 'info');
+      }
+    } catch (error) {
+      useStore.getState().toast((error as Error).message, 'error');
+    } finally {
+      setOpeningBooks(null);
+    }
+  };
 
   const handleShare = async (file: string) => {
     const key = `${meta.id}|${file}|${meta.dateModified}`;
@@ -609,7 +641,44 @@ export default function DetailPanel({
                     </button>
                   ),
                 )}
-                {isApple && shareFiles.length > 0 && (
+                {desktop() && shareFiles.length > 0 && (
+                  <div ref={shareMenuRef} className="relative">
+                    <button
+                      onClick={() => {
+                        if (hasEditions && shareFiles.length > 1) setShareMenu((open) => !open);
+                        else void handleOpenInBooksApp(meta.sourceFile as string);
+                      }}
+                      disabled={openingBooks !== null}
+                      className="btn-primary px-2.5 py-2 text-[12px] sm:py-1 disabled:opacity-60"
+                      title="Apre l'EPUB, con i metadati della scheda, nell'app Libri"
+                    >
+                      <IconShare className={cn('h-3.5 w-3.5', openingBooks !== null && 'animate-pulse')} />
+                      {openingBooks !== null
+                        ? 'Preparazione…'
+                        : `Apri in Libri${hasEditions && shareFiles.length > 1 ? ' ▾' : ''}`}
+                    </button>
+                    {shareMenu && (
+                      <div className="absolute left-0 top-full z-10 mt-1 min-w-[16rem] max-w-[22rem] rounded-lg border border-black/[0.08] bg-white p-1 shadow-panel">
+                        {languageRows
+                          .filter((row) => shareFiles.includes(row.file))
+                          .map((row) => (
+                            <button
+                              key={row.file}
+                              onClick={() => {
+                                setShareMenu(false);
+                                void handleOpenInBooksApp(row.file);
+                              }}
+                              className="block w-full truncate rounded-md px-2.5 py-1.5 text-left text-[12px] text-ink-200 hover:bg-black/[0.05]"
+                              title={row.file}
+                            >
+                              {languageLabel(row.language)} · {row.title || row.file}
+                            </button>
+                          ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+                {!desktop() && isApple && shareFiles.length > 0 && (
                   <div className="relative">
                     {hasEditions && shareFiles.length > 1 ? (
                       <div ref={shareMenuRef} className="relative">
@@ -658,7 +727,7 @@ export default function DetailPanel({
                     </span>
                   </div>
                 )}
-                {!isApple && canShareEpub && shareFiles.length > 0 && (
+                {!desktop() && !isApple && canShareEpub && shareFiles.length > 0 && (
                   <div ref={shareMenuRef} className="relative">
                     {(() => {
                       const multi = hasEditions && shareFiles.length > 1;

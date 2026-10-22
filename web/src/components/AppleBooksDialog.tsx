@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { api, ApiError } from '../api';
+import { DesktopError, desktop, fetchBuffer, unwrap } from '../desktop';
 import { useStore } from '../store';
 import { IconClose } from './icons';
 import type { AppleBooksWriteField, AppleBooksWriteStatus, BookMeta } from '@shared/types';
@@ -29,7 +30,18 @@ export default function AppleBooksDialog({
   const submit = async (quitApp: boolean) => {
     setBusy(true);
     try {
-      const result = await api.writeAppleBooks(meta.id, chosen, quitApp);
+      const bridge = desktop();
+      let result: { reopened: boolean };
+      if (bridge) {
+        // App per Mac: la copertina si scarica qui (con il cookie di sessione) e la scrittura avviene sul Mac.
+        const cover =
+          chosen.includes('cover') && meta.coverFile
+            ? await fetchBuffer(`/api/covers/${meta.id}?v=${encodeURIComponent(meta.coverFile)}`)
+            : undefined;
+        result = unwrap(await bridge.appleBooksWrite({ meta, fields: chosen, quitApp, cover }));
+      } else {
+        result = await api.writeAppleBooks(meta.id, chosen, quitApp);
+      }
       useStore
         .getState()
         .toast(
@@ -40,7 +52,12 @@ export default function AppleBooksDialog({
         );
       onClose();
     } catch (error) {
-      if (error instanceof ApiError && error.status === 409) setRunning(true);
+      if (
+        (error instanceof ApiError && error.status === 409) ||
+        (error instanceof DesktopError && error.code === 'running')
+      ) {
+        setRunning(true);
+      }
       else useStore.getState().toast((error as Error).message, 'error');
     } finally {
       setBusy(false);

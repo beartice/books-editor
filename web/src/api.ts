@@ -1,6 +1,7 @@
 import type {
   AppSettings,
   AppleBooksImportResult,
+  AppleBooksRawData,
   AppleBooksWriteField,
   AppleBooksWriteStatus,
   BookKind,
@@ -322,6 +323,16 @@ export const api = {
     request<AppleBooksImportResult>('/apple-books/import', {
       method: 'POST',
       body: JSON.stringify(options),
+    }),
+
+  appleBooksCapabilities: () => request<{ local: boolean }>('/apple-books/capabilities'),
+  importAppleBooksData: (
+    data: Pick<AppleBooksRawData, 'annotations' | 'library'>,
+    options: { dryRun?: boolean; bookIds?: string[] } = {},
+  ) =>
+    request<AppleBooksImportResult>('/apple-books/import-data', {
+      method: 'POST',
+      body: JSON.stringify({ annotations: data.annotations, library: data.library, ...options }),
     }),
 
   scan: () => request<ScanResult>('/library/scan', { method: 'POST' }),

@@ -4,8 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import { XMLValidator } from 'fast-xml-parser';
-import { locateDatabases, sqliteJson } from './appleBooks.js';
-import { DATA_DIR } from './config.js';
+import { locateDatabases, sqliteJson } from './appleBooksRead.js';
 import { rewriteOpf, sniffImage, toImageFormat } from './epubWrite.js';
 import type { BookRecord } from './library.js';
 
@@ -218,10 +217,11 @@ async function pruneBackups(bookDir: string): Promise<void> {
  * Apple Books ha gia'. L'assetID non si tocca mai: annotazioni e progressi
  * restano legati al libro. Il contenuto dell'OPF si riscrive nello stesso
  * file (stesso inode) e il database della libreria non si modifica.
+ * I backup vanno in `options.backupsDir` (il server usa DATA_DIR, l'app Mac userData).
  */
 export async function writeToAppleBooks(
   book: BookRecord,
-  options: { fields: AppleBooksField[]; quitApp?: boolean },
+  options: { fields: AppleBooksField[]; quitApp?: boolean; backupsDir: string },
   overrides: Partial<AppleBooksDeps> = {},
 ): Promise<AppleBooksWriteResult> {
   const deps = { ...defaultDeps, ...overrides };
@@ -256,7 +256,7 @@ export async function writeToAppleBooks(
   const created: string[] = [];
 
   /* 2. Backup completo della cartella (ditto conserva gli attributi estesi). */
-  const bookBackups = path.join(DATA_DIR, 'applebooks-backups', asset.assetId);
+  const bookBackups = path.join(options.backupsDir, asset.assetId);
   const backup = path.join(bookBackups, new Date().toISOString().replace(/[:.]/g, '-'));
   await fsp.mkdir(bookBackups, { recursive: true });
   await execFileAsync('ditto', [folder, backup]);

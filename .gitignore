@@ -25,3 +25,8 @@ deploy/target.env.example
 .claude/agents/*
 !.claude/agents/sonnet-coder.md
 !.claude/agents/haiku-ops.md
+
+# App per Mac (Electron): progetto separato, dipendenze e output di build
+desktop/node_modules/
+desktop/dist/
+desktop/release/

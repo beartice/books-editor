@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="it">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'self'">
+  <title>Books Editor</title>
+  <style>
+    body { font: 14px -apple-system, BlinkMacSystemFont, sans-serif; margin: 0; padding: 48px 40px; color: #1d1d1f; background: #f5f5f7; }
+    main { max-width: 440px; margin: 0 auto; }
+    h1 { font-size: 22px; margin: 0 0 6px; }
+    p { color: #555; line-height: 1.45; }
+    label { display: block; margin: 22px 0 6px; font-weight: 600; }
+    input { width: 100%; box-sizing: border-box; padding: 9px 11px; font-size: 14px; border: 1px solid #c9c9ce; border-radius: 8px; }
+    .row { display: flex; gap: 8px; margin-top: 14px; }
+    button { padding: 8px 16px; font-size: 14px; border-radius: 8px; border: 1px solid #c9c9ce; background: #fff; }
+    button.primary { background: #0a6cf0; color: #fff; border-color: #0a6cf0; }
+    button:disabled { opacity: .6; }
+    #msg { margin-top: 14px; min-height: 20px; color: #c0262d; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Books Editor</h1>
+    <p>Indica l'indirizzo del tuo server. Si sceglie una volta sola e si cambia dal menu «Books Editor → Cambia server…».</p>
+    <form id="form">
+      <label for="url">Indirizzo del server</label>
+      <input id="url" type="text" placeholder="https://esempio.it" autocomplete="off" autofocus>
+      <div class="row">
+        <button class="primary" id="connect" type="submit">Collega</button>
+        <button id="cancel" type="button" hidden>Annulla</button>
+      </div>
+      <div id="msg" role="alert"></div>
+    </form>
+  </main>
+  <script src="setup.js"></script>
+</body>
+</html>

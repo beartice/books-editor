@@ -1,51 +1,23 @@
-import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import fsp from 'node:fs/promises';
-import os from 'node:os';
-import path from 'node:path';
-import { promisify } from 'node:util';
 import { updateBook } from './library.js';
 import { loadIndex } from './store.js';
+import { readAppleBooksData } from './appleBooksRead.js';
 import type {
+  AppleAnnotationRow,
   AppleBooksImportResult,
   AppleBooksMatched,
+  AppleBooksRawData,
   AppleBooksUnmatched,
+  AppleLibraryRow,
   BookHighlight,
   BookMeta,
   HighlightColor,
 } from '../../shared/types.js';
 
-const execFileAsync = promisify(execFile);
-
 /** Apple usa il 1º gennaio 2001 come origine dei timestamp di Core Data. */
 const APPLE_EPOCH = 978307200;
-const MAX_BUFFER = 64 * 1024 * 1024;
 /** Sotto questa soglia il titolo non viene considerato un abbinamento affidabile. */
 const MATCH_THRESHOLD = 0.75;
-
-interface AnnotationRow {
-  uuid?: string | null;
-  assetId?: string | null;
-  text?: string | null;
-  note?: string | null;
-  location?: string | null;
-  style?: number | string | null;
-  underline?: number | string | null;
-  createdAt?: number | string | null;
-  modifiedAt?: number | string | null;
-}
-
-interface AppleLibraryRow {
-  assetId?: string | null;
-  title?: string | null;
-  sortTitle?: string | null;
-  author?: string | null;
-  sortAuthor?: string | null;
-  /** Data di fine lettura (timestamp Core Data). */
-  finishedAt?: number | string | null;
-  /** Avanzamento di lettura da 0 a 1. */
-  readingProgress?: number | string | null;
-}
 
 interface AppleBook {
   assetId: string;
@@ -65,95 +37,6 @@ interface MatchPair {
   score: number;
   /** Affidabilita' del titolo: 2 = esatto, 1 = serie/sottotitolo, 0 = debole. */
   titleRank: number;
-}
-
-function expandHome(value: string): string {
-  if (value === '~') return os.homedir();
-  if (value.startsWith('~/')) return path.join(os.homedir(), value.slice(2));
-  return path.resolve(value);
-}
-
-/**
- * Cartelle `Data/Documents` candidate. `APPLE_BOOKS_CONTAINER` può puntare al
- * container oppure alla cartella Documents (utile per i backup).
- */
-export function documentsCandidates(): string[] {
-  const candidates: string[] = [];
-  const configured = process.env.APPLE_BOOKS_CONTAINER?.trim();
-  if (configured) {
-    const root = expandHome(configured);
-    candidates.push(path.join(root, 'Data', 'Documents'));
-    candidates.push(root);
-    candidates.push(path.join(root, 'Documents'));
-  }
-  candidates.push(
-    path.join(os.homedir(), 'Library/Containers/com.apple.iBooksX/Data/Documents'),
-  );
-  return [...new Set(candidates)];
-}
-
-async function findDatabase(dir: string, pattern: RegExp): Promise<string | null> {
-  let entries: string[];
-  try {
-    entries = await fsp.readdir(dir);
-  } catch {
-    return null;
-  }
-  const files = entries.filter(
-    (name) => pattern.test(name) && !name.endsWith('-wal') && !name.endsWith('-shm'),
-  );
-  if (!files.length) return null;
-  const stats = await Promise.all(
-    files.map(async (name) => {
-      const file = path.join(dir, name);
-      const stat = await fsp.stat(file).catch(() => null);
-      return { file, at: stat?.mtimeMs ?? 0 };
-    }),
-  );
-  stats.sort((a, b) => b.at - a.at);
-  return stats[0].file;
-}
-
-export async function locateDatabases(): Promise<{ annotations: string; library: string | null }> {
-  for (const docs of documentsCandidates()) {
-    const annotations = await findDatabase(
-      path.join(docs, 'AEAnnotation'),
-      /^AEAnnotation.*\.sqlite$/i,
-    );
-    if (!annotations) continue;
-    const library = await findDatabase(
-      path.join(docs, 'BKLibrary'),
-      /^BKLibrary.*\.sqlite$/i,
-    );
-    return { annotations, library };
-  }
-  throw new Error(
-    'Database di Apple Books non trovato. Apri Libri sul Mac almeno una volta, ' +
-      'oppure imposta APPLE_BOOKS_CONTAINER sulla cartella del container (anche di un backup).',
-  );
-}
-
-export async function sqliteJson<T>(database: string, sql: string): Promise<T[]> {
-  try {
-    const { stdout } = await execFileAsync(
-      'sqlite3',
-      ['-json', '-readonly', database, sql],
-      { maxBuffer: MAX_BUFFER },
-    );
-    const text = stdout.trim();
-    if (!text) return [];
-    return JSON.parse(text) as T[];
-  } catch (error) {
-    const err = error as NodeJS.ErrnoException & { stderr?: string };
-    if (err.code === 'ENOENT') {
-      throw new Error(
-        'Il comando sqlite3 non è disponibile. Su macOS è incluso nel sistema; ' +
-          'negli altri ambienti l’importazione di Apple Books non è supportata.',
-      );
-    }
-    const detail = err.stderr?.trim() || err.message;
-    throw new Error(`Lettura del database Apple Books non riuscita: ${detail}`);
-  }
 }
 
 function numberOrNull(value: unknown): number | null {
@@ -359,53 +242,7 @@ function matchScore(book: BookMeta, apple: AppleBook): number {
   return score;
 }
 
-async function readAnnotations(database: string): Promise<{
-  rows: AnnotationRow[];
-  count: number;
-}> {
-  const rows = await sqliteJson<AnnotationRow>(
-    database,
-    `SELECT
-       ZANNOTATIONUUID AS uuid,
-       ZANNOTATIONASSETID AS assetId,
-       ZANNOTATIONSELECTEDTEXT AS text,
-       ZANNOTATIONNOTE AS note,
-       ZANNOTATIONLOCATION AS location,
-       ZANNOTATIONSTYLE AS style,
-       ZANNOTATIONISUNDERLINE AS underline,
-       ZANNOTATIONCREATIONDATE AS createdAt,
-       ZANNOTATIONMODIFICATIONDATE AS modifiedAt
-     FROM ZAEANNOTATION
-     WHERE ZANNOTATIONDELETED = 0
-       AND trim(COALESCE(ZANNOTATIONSELECTEDTEXT, '')) <> ''`,
-  );
-  return { rows, count: rows.length };
-}
-
-async function readLibrary(database: string | null): Promise<Map<string, AppleLibraryRow>> {
-  const map = new Map<string, AppleLibraryRow>();
-  if (!database) return map;
-  const rows = await sqliteJson<AppleLibraryRow>(
-    database,
-    `SELECT
-       ZASSETID AS assetId,
-       ZTITLE AS title,
-       ZSORTTITLE AS sortTitle,
-       ZAUTHOR AS author,
-       ZSORTAUTHOR AS sortAuthor,
-       ZDATEFINISHED AS finishedAt,
-       ZREADINGPROGRESS AS readingProgress
-     FROM ZBKLIBRARYASSET
-     WHERE ZASSETID IS NOT NULL`,
-  );
-  for (const row of rows) {
-    const assetId = String(row.assetId ?? '').trim();
-    if (assetId) map.set(assetId, row);
-  }
-  return map;
-}
-
-function buildHighlights(rows: AnnotationRow[]): Map<string, BookHighlight[]> {
+function buildHighlights(rows: AppleAnnotationRow[]): Map<string, BookHighlight[]> {
   const byAsset = new Map<string, BookHighlight[]>();
   for (const row of rows) {
     const assetId = String(row.assetId ?? '').trim();
@@ -536,18 +373,17 @@ function sameHighlights(left: BookHighlight[], right: BookHighlight[]): boolean 
  * Con `bookIds` l'abbinamento si limita a quei libri: e' la modalita' usata
  * dopo l'aggiunta di un'opera, cosi' la sincronizzazione resta veloce.
  */
-export async function importAppleBooks(
+export async function importAppleBooksFromRows(
+  data: AppleBooksRawData,
   options: { dryRun?: boolean; bookIds?: string[] } = {},
 ): Promise<AppleBooksImportResult> {
-  if (process.platform !== 'darwin' && !process.env.APPLE_BOOKS_CONTAINER) {
-    throw new Error('L’importazione da Apple Books è disponibile solo su macOS.');
+  const rows = data.annotations;
+  // Come nel database: se un asset compare due volte vale l'ultima riga.
+  const libraryRows = new Map<string, AppleLibraryRow>();
+  for (const row of data.library) {
+    const assetId = String(row.assetId ?? '').trim();
+    if (assetId) libraryRows.set(assetId, row);
   }
-
-  const { annotations: annotationDb, library: libraryDb } = await locateDatabases();
-  const [{ rows }, libraryRows] = await Promise.all([
-    readAnnotations(annotationDb),
-    readLibrary(libraryDb),
-  ]);
 
   const byAsset = buildHighlights(rows);
   const appleBooks = buildAppleBooks(byAsset, libraryRows);
@@ -639,7 +475,7 @@ export async function importAppleBooks(
   }
 
   return {
-    database: annotationDb,
+    database: data.database,
     annotations: rows.length,
     imported,
     booksMatched: matched.length,
@@ -650,6 +486,13 @@ export async function importAppleBooks(
     matched,
     unmatched,
   };
+}
+
+/** Importa leggendo Apple Books da questo stesso computer (server in locale sul Mac). */
+export async function importAppleBooks(
+  options: { dryRun?: boolean; bookIds?: string[] } = {},
+): Promise<AppleBooksImportResult> {
+  return importAppleBooksFromRows(await readAppleBooksData(), options);
 }
 
 /**

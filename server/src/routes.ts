@@ -5,6 +5,7 @@ import { pipeline } from 'node:stream/promises';
 import type { Readable } from 'node:stream';
 import type { FastifyInstance, FastifyReply } from 'fastify';
 import {
+  DATA_DIR,
   DEFAULT_LIBRARY_ROOT,
   IMPORT_ROOTS,
   IS_PRODUCTION,
@@ -51,7 +52,8 @@ import { lookupFanficPage, lookupGoogleVolume, lookupOnline } from './providers/
 import { getCoverThumbnail, removeCoverThumbnails } from './thumbnails.js';
 import { lookupSeries, readCachedSeries } from './providers/series.js';
 import { readSeriesTotals, writeSeriesTotal } from './seriesCache.js';
-import { importAppleBooks, syncAppleBooksForBooks } from './appleBooks.js';
+import { importAppleBooks, importAppleBooksFromRows, syncAppleBooksForBooks } from './appleBooks.js';
+import { AppleBooksInputError, parseAppleBooksInput } from './appleBooksInput.js';
 import { buildEpubWithMetadata, writeEpubMetadata } from './epubWrite.js';
 import { AppleBooksError, appleBooksStatus, writeToAppleBooks, type AppleBooksField } from './appleBooksWrite.js';
 import { buildEpub, buildOdt, importEfpStory, loadEfpStory } from './efp.js';
@@ -515,7 +517,11 @@ export async function registerApi(app: FastifyInstance): Promise<void> {
       );
       if (!fields.length) return reply.code(400).send({ error: 'Scegli almeno un campo da scrivere' });
       try {
-        return await writeToAppleBooks(record, { fields, quitApp: request.body?.quitApp === true });
+        return await writeToAppleBooks(record, {
+          fields,
+          quitApp: request.body?.quitApp === true,
+          backupsDir: path.join(DATA_DIR, 'applebooks-backups'),
+        });
       } catch (error) {
         const code = error instanceof AppleBooksError && error.code === 'running' ? 409 : 400;
         return reply.code(code).send({ error: (error as Error).message });
@@ -886,6 +892,31 @@ export async function registerApi(app: FastifyInstance): Promise<void> {
         return await importAppleBooks({ dryRun: Boolean(request.body?.dryRun) });
       } catch (error) {
         return reply.code(400).send({ error: (error as Error).message });
+      }
+    },
+  );
+
+  /**
+   * Dice se il server legge Apple Books da se' (macOS o container indicato).
+   * APPLE_BOOKS_FORCE_REMOTE=1 simula un server remoto: serve solo alle prove.
+   */
+  app.get('/api/apple-books/capabilities', async () => ({
+    local:
+      process.env.APPLE_BOOKS_FORCE_REMOTE !== '1' &&
+      (process.platform === 'darwin' || Boolean(process.env.APPLE_BOOKS_CONTAINER)),
+  }));
+
+  /** Import dai dati letti dall'app per Mac (annotazioni e libreria di Apple Books). */
+  app.post(
+    '/api/apple-books/import-data',
+    { bodyLimit: 50 * 1024 * 1024 },
+    async (request, reply) => {
+      try {
+        const { data, dryRun, bookIds } = parseAppleBooksInput(request.body);
+        return await importAppleBooksFromRows(data, { dryRun, bookIds });
+      } catch (error) {
+        const status = error instanceof AppleBooksInputError ? error.status : 400;
+        return reply.code(status).send({ error: (error as Error).message });
       }
     },
   );

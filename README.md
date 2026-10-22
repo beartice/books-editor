@@ -457,6 +457,7 @@ l'app non vede l'IP reale ne' l'HTTPS.
 | `LIBRARY_ROOT` | `./library` | Cartella della libreria |
 | `DATA_DIR` | `./data` | Indice e impostazioni |
 | `APPLE_BOOKS_CONTAINER` | — | Cartella del container di Apple Books o di un backup, per l'import delle annotazioni (solo macOS) |
+| `APPLE_BOOKS_FORCE_REMOTE` | — | Solo per le prove: `1` fa rispondere `local: false` a `/api/apple-books/capabilities`, cioè simula un server remoto anche su un Mac |
 | `AUTH_USER` / `AUTH_PASS_HASH` | — | Facoltative: utente e hash scrypt fissati dal server (altrimenti l'account si crea dall'interfaccia al primo avvio) |
 | `AUTH_PASS` | — | Password in chiaro (deprecata, sconsigliata) |
 | `AUTH_DISABLED` | — | `1` = app aperta se non esiste nessun account (sconsigliato) |
@@ -620,6 +621,49 @@ iPad le annotazioni arrivano al database del Mac tramite iCloud; in alternativa
 puoi estrarre il container da un backup non cifrato e impostare
 `APPLE_BOOKS_CONTAINER` sulla sua cartella `Data/Documents`.
 
+### App per Mac
+
+Il server può stare su un'altra macchina (Linux, Docker): in quel caso l'import da
+Apple Books, la scrittura su Apple Books e «Apri in Libri» hanno bisogno del Mac.
+L'app in `desktop/` (Electron, `.dmg` per Apple Silicon) apre il tuo server in una
+finestra e aggiunge queste funzioni, che nel browser non compaiono:
+
+1. **Importa da Apple Books**: sottolineature, note, avanzamento e date di fine lettura.
+   L'app legge i database di Libri sul Mac e la pagina li invia al server.
+2. **Scrivi su Apple Books**: titolo, autori e copertina nella cartella iCloud di Libri,
+   con backup in `~/Library/Application Support/Books Editor/applebooks-backups`.
+3. **Apri in Libri**: apre l'EPUB, con i metadati della scheda, nell'app Libri.
+
+L'app lavora solo su dati locali e non fa richieste autenticate al server: è la pagina
+web, con la propria sessione, a parlare con il server e a passare i dati all'app.
+Dopo aver aggiunto un'opera la sincronizzazione con Apple Books parte da sola.
+
+**Compilazione** (serve Node 22 o più recente):
+
+```bash
+cd desktop
+npm install
+npm run dist       # crea release/Books Editor-<versione>-arm64.dmg
+```
+
+`npm run build` compila solo main e preload; `npm run start` avvia l'app in sviluppo.
+`desktop/` ha il suo `package.json` e non fa parte dei workspace: la build Docker del
+server non installa Electron.
+
+**Primo avvio.** L'app chiede l'indirizzo del server (`http://` o `https://`), verifica
+`/api/health` e lo ricorda; lo cambi da **Books Editor → Cambia server…**. L'accesso
+(login) resta salvato fra un avvio e l'altro.
+
+**App non firmata.** Il `.dmg` è firmato solo in modo ad-hoc, senza notarizzazione. Se
+lo scarichi da Internet, al primo avvio fai clic destro sull'app → **Apri**. Un'app
+compilata sul tuo Mac non ha questo problema.
+
+**Permessi di macOS.** Per leggere i database di Libri macOS può chiedere il permesso
+«accesso ai dati di altre app» (o l'accesso completo al disco): concedilo a Books Editor
+in **Impostazioni di Sistema → Privacy e sicurezza**.
+
+Fuori casa usa il sito dal browser: le funzioni Apple compaiono solo nell'app.
+
 ### PDF / DOCX / TXT
 
 Titolo, autore, pagine, parole e (per i PDF) l'immagine incorporata come copertina.
@@ -683,7 +727,9 @@ books-editor/
 │       ├── config.ts         # variabili d'ambiente e percorsi
 │       ├── store.ts          # indice JSON + impostazioni (scrittura atomica)
 │       ├── library.ts        # scansione, import, salvataggio, copertine
-│       ├── appleBooks.ts     # import di evidenziazioni e note da Apple Books
+│       ├── appleBooksRead.ts # lettura dei database di Apple Books (senza libreria)
+│       ├── appleBooks.ts     # abbinamento e import di evidenziazioni e note
+│       ├── appleBooksWrite.ts # scrittura di titolo, autori e copertina su Apple Books
 │       ├── routes.ts         # API REST
 │       ├── metadata/
 │       │   ├── epub.ts       # parser EPUB (OPF, copertina, testo)
@@ -736,6 +782,8 @@ Tutte le rotte sono sotto `/api`.
 | `POST` | `/books/:id/apply` | Applica un candidato |
 | `POST` | `/series/lookup` | Cerca online i volumi o le opere mancanti di una serie (libri e AO3) |
 | `POST` | `/apple-books/import` | Importa evidenziazioni e note da Apple Books (body `{ "dryRun": true }` per l'anteprima) |
+| `GET` | `/apple-books/capabilities` | `{ local }`: il server legge Apple Books da sé (macOS o `APPLE_BOOKS_CONTAINER`) |
+| `POST` | `/apple-books/import-data` | Come `/apple-books/import`, ma con i dati letti dall'app per Mac (body `{ annotations, library, dryRun?, bookIds? }`) |
 | `POST` | `/library/scan` | Riscansiona la cartella |
 | `POST` | `/library/import` | Importa da un percorso sul server |
 | `POST` | `/library/upload` | Importa un file caricato dal browser |
