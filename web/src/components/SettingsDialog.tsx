@@ -10,7 +10,7 @@ interface Props {
 }
 
 export default function SettingsDialog({ onClose }: Props) {
-  const { settings, setSettings } = useStore();
+  const { settings, setSettings, libraryId } = useStore();
   const [libraryRoot, setLibraryRoot] = useState(settings?.libraryRoot ?? '');
   const [libraryName, setLibraryName] = useState(settings?.libraryName ?? '');
   const [searchLanguage, setSearchLanguage] = useState(settings?.searchLanguage ?? 'it');
@@ -162,7 +162,12 @@ export default function SettingsDialog({ onClose }: Props) {
             </div>
             <span className="mt-1 flex items-center gap-1 text-[11px] text-ink-500">
               <IconFolder className="h-3.5 w-3.5" />
-              {settings.libraryRootLocked ? (
+              {libraryId !== 'main' ? (
+                <>
+                  Le librerie aggiuntive stanno nella cartella{' '}
+                  <code className="font-mono">LIBRARIES_ROOT</code> del server: la cartella non si cambia da qui.
+                </>
+              ) : settings.libraryRootLocked ? (
                 <>
                   Cartella fissata dalla variabile d'ambiente <code className="font-mono">LIBRARY_ROOT</code>: non
                   modificabile da qui.

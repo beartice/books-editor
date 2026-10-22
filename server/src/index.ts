@@ -6,6 +6,7 @@ import multipart from '@fastify/multipart';
 import fastifyStatic from '@fastify/static';
 import { CORS_ORIGINS, DATA_DIR, IS_PRODUCTION, MAX_UPLOAD_BYTES, PORT, HOST, TRUST_PROXY, WEB_DIST, ensureDir } from './config.js';
 import { checkAuthConfig, registerAuth } from './auth.js';
+import { registerLibraryContext, allLibraries, runInLibrary } from './libraries.js';
 import { registerApi } from './routes.js';
 import { loadSettings } from './store.js';
 import { scanLibrary } from './library.js';
@@ -67,6 +68,9 @@ app.addHook('onSend', async (_request, reply) => {
 /* Login con sessione, CSRF e controllo d'accesso su /api/*. */
 registerAuth(app);
 
+/* Libreria della richiesta (X-Library o ?lib=): dopo il controllo d'accesso. */
+registerLibraryContext(app);
+
 await registerApi(app);
 
 /* Front-end statico (build di produzione). */
@@ -117,16 +121,20 @@ async function bootstrap(): Promise<void> {
   const settings = await loadSettings();
   ensureDir(settings.libraryRoot);
 
-  try {
-    const result = await scanLibrary();
-    if (result.added || result.updated || result.removed) {
-      app.log.info(
-        { ...result, errors: result.errors.length },
-        `Libreria sincronizzata: +${result.added} aggiunti, ${result.updated} aggiornati, ${result.removed} rimossi`,
-      );
+  // Ogni libreria (la principale e quelle aggiuntive) si scansiona nel proprio contesto.
+  for (const library of await allLibraries()) {
+    try {
+      ensureDir(library.root);
+      const result = await runInLibrary(library, () => scanLibrary());
+      if (result.added || result.updated || result.removed) {
+        app.log.info(
+          { ...result, errors: result.errors.length },
+          `Libreria «${library.name}» sincronizzata: +${result.added} aggiunti, ${result.updated} aggiornati, ${result.removed} rimossi`,
+        );
+      }
+    } catch (error) {
+      app.log.error({ err: error }, `Scansione iniziale fallita per la libreria «${library.name}»`);
     }
-  } catch (error) {
-    app.log.error({ err: error }, 'Scansione iniziale fallita');
   }
 
   await app.listen({ port: PORT, host: HOST });

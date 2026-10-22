@@ -3,6 +3,7 @@ dist/
 data/
 library/*
 !library/.gitkeep
+librerie/
 .env
 .DS_Store
 *.log

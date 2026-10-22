@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef } from 'react';
-import { useStore } from '../store';
+import { libraryNameOf, useStore } from '../store';
 import type { QuickFilter } from '../store';
 import { SORT_LABELS, cn, initials } from '../utils';
 import type { SortKey } from '@shared/types';
@@ -44,7 +44,6 @@ export default function TopBar({
     setView,
     scan,
     busy,
-    settings,
     filters,
     setQuickFilter,
     clearFilters,
@@ -62,7 +61,7 @@ export default function TopBar({
     return () => window.removeEventListener('keydown', onKey);
   }, []);
 
-  const libraryName = settings?.libraryName?.trim() || 'La mia libreria';
+  const libraryName = useStore(libraryNameOf);
   const libraryInitials = initials(libraryName) || 'LM';
   const category = categoryFromFilters(filters);
 

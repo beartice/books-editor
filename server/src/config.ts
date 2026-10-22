@@ -38,6 +38,8 @@ function envPath(name: string, fallback: string): string {
 
 export const DATA_DIR = envPath('DATA_DIR', path.join(PROJECT_ROOT, 'data'));
 export const DEFAULT_LIBRARY_ROOT = envPath('LIBRARY_ROOT', path.join(PROJECT_ROOT, 'library'));
+/** Cartella che contiene le librerie aggiuntive: una sottocartella per ciascuna. */
+export const LIBRARIES_ROOT = envPath('LIBRARIES_ROOT', path.join(PROJECT_ROOT, 'librerie'));
 
 export const PORT = Number(process.env.PORT ?? 8787);
 export const HOST = process.env.HOST ?? '0.0.0.0';

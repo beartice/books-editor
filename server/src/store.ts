@@ -1,9 +1,9 @@
 import fsp from 'node:fs/promises';
 import path from 'node:path';
 import { DATA_DIR, DEFAULT_LIBRARY_ROOT, LIBRARY_ROOT_LOCKED, ensureDir } from './config.js';
+import { currentLibrary, type LibraryInfo } from './libraries.js';
 import type { AppSettings, BookMeta, BookSummary } from '../../shared/types.js';
 
-const INDEX_FILE = path.join(DATA_DIR, 'index.json');
 const SETTINGS_FILE = path.join(DATA_DIR, 'settings.json');
 
 /**
@@ -27,7 +27,8 @@ const DEFAULT_SETTINGS: AppSettings = {
   showAllFields: false,
 };
 
-let indexCache: BookMeta[] | null = null;
+/** Indice in memoria, uno per libreria (chiave: id della libreria). */
+const indexCaches = new Map<string, BookMeta[]>();
 let settingsCache: AppSettings | null = null;
 let writeChain: Promise<unknown> = Promise.resolve();
 
@@ -45,25 +46,51 @@ function queue<T>(fn: () => Promise<T>): Promise<T> {
   return next;
 }
 
-export async function loadIndex(): Promise<BookMeta[]> {
-  if (indexCache) return indexCache;
+/** Dati di una libreria che servono per leggerne o scriverne l'indice. */
+type IndexTarget = Pick<LibraryInfo, 'id' | 'dataDir'>;
+
+function indexFile(library: IndexTarget): string {
+  return path.join(library.dataDir, 'index.json');
+}
+
+/** Indice della libreria indicata (la principale sta in DATA_DIR/index.json). */
+export async function loadIndexFor(library: IndexTarget): Promise<BookMeta[]> {
+  const cached = indexCaches.get(library.id);
+  if (cached) return cached;
+  let books: BookMeta[];
   try {
-    const raw = await fsp.readFile(INDEX_FILE, 'utf8');
+    const raw = await fsp.readFile(indexFile(library), 'utf8');
     const parsed = JSON.parse(raw) as IndexFile;
-    indexCache = Array.isArray(parsed.books) ? parsed.books : [];
+    books = Array.isArray(parsed.books) ? parsed.books : [];
   } catch {
-    indexCache = [];
+    books = [];
   }
-  return indexCache;
+  indexCaches.set(library.id, books);
+  return books;
+}
+
+export async function saveIndexFor(library: IndexTarget, books: BookMeta[]): Promise<void> {
+  indexCaches.set(library.id, books);
+  const payload: IndexFile = { version: 1, books };
+  await queue(() => writeJsonAtomic(indexFile(library), payload));
+}
+
+/** Indice della libreria della richiesta corrente. */
+export async function loadIndex(): Promise<BookMeta[]> {
+  return loadIndexFor(currentLibrary());
 }
 
 export async function saveIndex(books: BookMeta[]): Promise<void> {
-  indexCache = books;
-  const payload: IndexFile = { version: 1, books };
-  await queue(() => writeJsonAtomic(INDEX_FILE, payload));
+  return saveIndexFor(currentLibrary(), books);
 }
 
-export async function loadSettings(): Promise<AppSettings> {
+/** Toglie l'indice dalla memoria (libreria eliminata). */
+export function dropIndexCache(id: string): void {
+  indexCaches.delete(id);
+}
+
+/** Impostazioni globali, senza adattarle alla libreria corrente. */
+async function loadGlobalSettings(): Promise<AppSettings> {
   if (settingsCache) return settingsCache;
   try {
     const raw = await fsp.readFile(SETTINGS_FILE, 'utf8');
@@ -76,12 +103,43 @@ export async function loadSettings(): Promise<AppSettings> {
   return settingsCache;
 }
 
-export async function saveSettings(patch: Partial<AppSettings>): Promise<AppSettings> {
-  const current = await loadSettings();
+/** Impostazioni gia' in memoria (o i valori predefiniti): per chi non puo' aspettare. */
+export function peekSettings(): AppSettings {
+  return settingsCache ?? DEFAULT_SETTINGS;
+}
+
+/**
+ * Impostazioni valide per la libreria corrente: quelle globali (chiavi API,
+ * Jellyfin, tema...) con cartella e nome della libreria aperta.
+ */
+export async function loadSettings(): Promise<AppSettings> {
+  const global = await loadGlobalSettings();
+  const library = currentLibrary();
+  if (library.isMain) return global;
+  return { ...global, libraryRoot: library.root, libraryName: library.name };
+}
+
+/** Salva nel file globale senza filtrare nulla (anche cartella e nome della principale). */
+export async function saveGlobalSettings(patch: Partial<AppSettings>): Promise<AppSettings> {
+  const current = await loadGlobalSettings();
   settingsCache = { ...current, ...patch };
   if (LIBRARY_ROOT_LOCKED) settingsCache.libraryRoot = DEFAULT_LIBRARY_ROOT;
-  await queue(() => writeJsonAtomic(SETTINGS_FILE, settingsCache));
-  return settingsCache;
+  const snapshot = settingsCache;
+  await queue(() => writeJsonAtomic(SETTINGS_FILE, snapshot));
+  return snapshot;
+}
+
+/**
+ * Da una libreria diversa dalla principale cartella e nome non finiscono nel
+ * file globale: appartengono alla principale (il nome si cambia con renameLibrary).
+ */
+export async function saveSettings(patch: Partial<AppSettings>): Promise<AppSettings> {
+  if (!currentLibrary().isMain) {
+    const { libraryRoot: _root, libraryName: _name, ...rest } = patch;
+    patch = rest;
+  }
+  await saveGlobalSettings(patch);
+  return loadSettings();
 }
 
 export function toSummary(book: BookMeta): BookSummary {

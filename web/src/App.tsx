@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { matchesQuickFilter, selectVisible, useStore } from './store';
+import { libraryNameOf, matchesQuickFilter, selectVisible, useStore } from './store';
 import type { QuickFilter } from './store';
 import TopBar from './components/TopBar';
 import Sidebar from './components/Sidebar';
@@ -32,6 +32,7 @@ const PAGE_SIZE = 60;
 export default function App() {
   const {
     books,
+    libraryId,
     loading,
     checkAuth,
     authChecked,
@@ -50,6 +51,7 @@ export default function App() {
     settingsOpen,
     setSettingsOpen,
   } = useStore();
+  const libraryName = useStore(libraryNameOf);
   const [showImport, setShowImport] = useState(false);
   const [mobileFilters, setMobileFilters] = useState(false);
   const [seriesOpen, setSeriesOpen] = useState(false);
@@ -75,7 +77,7 @@ export default function App() {
   // quando cambia `books`: modificare un voto non deve far saltare la pagina.
   useEffect(() => {
     setPage(1);
-  }, [query, filters, sort]);
+  }, [query, filters, sort, libraryId]);
 
   const pageCount = Math.max(1, Math.ceil(visible.length / PAGE_SIZE));
   const currentPage = Math.min(page, pageCount);
@@ -144,7 +146,7 @@ export default function App() {
                   <div>
                     <p className="eyebrow hidden sm:block">La tua raccolta</p>
                     <h2 className="mt-1 text-[22px] font-semibold tracking-[-0.03em] text-ink-50 sm:text-[30px]">
-                      La tua libreria
+                      {libraryName}
                     </h2>
                     <p className="mt-1 text-sm text-ink-500">
                       {visible.length === 1 ? '1 opera' : `${visible.length} opere`}

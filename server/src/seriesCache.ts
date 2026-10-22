@@ -1,9 +1,9 @@
 import fsp from 'node:fs/promises';
 import path from 'node:path';
-import { DATA_DIR, ensureDir } from './config.js';
+import { ensureDir } from './config.js';
+import { currentLibrary } from './libraries.js';
 import type { SeriesVolume } from '../../shared/types.js';
 
-const CACHE_FILE = path.join(DATA_DIR, 'series-cache.json');
 /** Limite di sicurezza: le voci più vecchie vengono eliminate al salvataggio. */
 const MAX_CACHE_AGE = 400 * 24 * 60 * 60 * 1000;
 const MAX_ENTRIES = 500;
@@ -22,8 +22,14 @@ interface CacheFile {
   totals: Record<string, number>;
 }
 
-let cache: Record<string, CacheEntry> | null = null;
-let totals: Record<string, number> = {};
+/** Cache e totali di una libreria, tenuti in memoria (chiave: id della libreria). */
+interface LibraryState {
+  file: string;
+  cache: Record<string, CacheEntry>;
+  totals: Record<string, number>;
+}
+
+const states = new Map<string, LibraryState>();
 let writeChain: Promise<unknown> = Promise.resolve();
 
 /**
@@ -42,27 +48,43 @@ function migrateEntries(entries: Record<string, CacheEntry>): Record<string, Cac
   return result;
 }
 
-async function loadCache(): Promise<Record<string, CacheEntry>> {
-  if (cache) return cache;
+/** Stato della libreria corrente: il file sta nella sua cartella dati. */
+async function loadState(): Promise<LibraryState> {
+  const library = currentLibrary();
+  const known = states.get(library.id);
+  if (known) return known;
+  const state: LibraryState = {
+    file: path.join(library.dataDir, 'series-cache.json'),
+    cache: {},
+    totals: {},
+  };
   try {
-    const raw = await fsp.readFile(CACHE_FILE, 'utf8');
+    const raw = await fsp.readFile(state.file, 'utf8');
     const parsed = JSON.parse(raw) as Partial<CacheFile> & { version?: number };
     const entries =
       parsed && typeof parsed.entries === 'object' && parsed.entries !== null
         ? parsed.entries
         : {};
-    cache = parsed?.version === 2 ? entries : migrateEntries(entries);
-    totals = {};
+    state.cache = parsed?.version === 2 ? entries : migrateEntries(entries);
     if (parsed?.totals && typeof parsed.totals === 'object') {
       for (const [key, value] of Object.entries(parsed.totals)) {
-        if (Number.isInteger(value) && value >= 1 && value <= 500) totals[key] = value;
+        if (Number.isInteger(value) && value >= 1 && value <= 500) state.totals[key] = value;
       }
     }
   } catch {
-    cache = {};
-    totals = {};
+    state.cache = {};
+    state.totals = {};
   }
-  return cache;
+  // Se nel frattempo un'altra richiesta ha gia' caricato lo stato, vince il suo.
+  const raced = states.get(library.id);
+  if (raced) return raced;
+  states.set(library.id, state);
+  return state;
+}
+
+/** Toglie la cache dalla memoria (libreria eliminata). */
+export function dropSeriesCache(id: string): void {
+  states.delete(id);
 }
 
 /** Scrittura atomica, come per l'indice: un file temporaneo e poi il rename. */
@@ -92,7 +114,7 @@ export async function readSeriesCache(
   key: string,
   maxAgeMs: number,
 ): Promise<StoredSeries | null> {
-  const entries = await loadCache();
+  const { cache: entries } = await loadState();
   const entry = entries[key];
   if (!entry || !Number.isFinite(entry.at) || !Array.isArray(entry.volumes)) return null;
   if (Date.now() - entry.at > maxAgeMs) return null;
@@ -104,29 +126,29 @@ export async function writeSeriesCache(
   volumes: SeriesVolume[],
   complete = false,
 ): Promise<void> {
-  const entries = await loadCache();
-  entries[key] = { at: Date.now(), volumes, complete };
+  const state = await loadState();
+  state.cache[key] = { at: Date.now(), volumes, complete };
 
   const now = Date.now();
-  const kept = Object.entries(entries)
+  const kept = Object.entries(state.cache)
     .filter(([, entry]) => Number.isFinite(entry.at) && now - entry.at <= MAX_CACHE_AGE)
     .sort((a, b) => b[1].at - a[1].at)
     .slice(0, MAX_ENTRIES);
-  cache = Object.fromEntries(kept);
+  state.cache = Object.fromEntries(kept);
 
-  await persist();
+  await persist(state);
 }
 
 /** Salva voci e totali insieme; lo snapshot viene preso al momento della scrittura. */
-async function persist(): Promise<void> {
+async function persist(state: LibraryState): Promise<void> {
   await queue(() => {
-    const payload: CacheFile = { version: 2, entries: cache ?? {}, totals };
-    return writeJsonAtomic(CACHE_FILE, payload);
+    const payload: CacheFile = { version: 2, entries: state.cache, totals: state.totals };
+    return writeJsonAtomic(state.file, payload);
   });
 }
 
 export async function readSeriesTotals(): Promise<Record<string, number>> {
-  await loadCache();
+  const { totals } = await loadState();
   return { ...totals };
 }
 
@@ -141,9 +163,9 @@ export async function writeSeriesTotal(
   if (total !== null && (!Number.isInteger(total) || total < 1 || total > 500)) {
     throw new Error('Il totale deve essere un numero intero da 1 a 500');
   }
-  await loadCache();
-  if (total === null) delete totals[key];
-  else totals[key] = total;
-  await persist();
-  return { ...totals };
+  const state = await loadState();
+  if (total === null) delete state.totals[key];
+  else state.totals[key] = total;
+  await persist(state);
+  return { ...state.totals };
 }

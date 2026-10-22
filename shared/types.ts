@@ -397,3 +397,11 @@ export interface AppleBooksWriteStatus {
 }
 
 export type AppleBooksWriteField = 'title' | 'authors' | 'cover';
+
+/** Una libreria dell'account: la principale (id `main`) o una creata dall'utente. */
+export interface LibrarySummary {
+  id: string;
+  name: string;
+  bookCount: number;
+  isMain: boolean;
+}

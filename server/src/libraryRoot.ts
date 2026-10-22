@@ -2,7 +2,7 @@ import crypto from 'node:crypto';
 import fsp from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { DATA_DIR } from './config.js';
+import { DATA_DIR, LIBRARIES_ROOT } from './config.js';
 
 /** true se `child` coincide con `parent` o sta al suo interno. */
 function isInside(parent: string, child: string): boolean {
@@ -20,8 +20,9 @@ async function realOrSame(target: string): Promise<string> {
 
 /**
  * Convalida e prepara la cartella della libreria scelta dall'utente: espande `~`,
- * richiede un percorso assoluto, esclude la radice e la cartella dei dati, crea la
- * cartella e verifica che sia scrivibile. Restituisce il percorso risolto.
+ * richiede un percorso assoluto, esclude la radice, la cartella dei dati e quella
+ * delle librerie aggiuntive, crea la cartella e verifica che sia scrivibile.
+ * Restituisce il percorso risolto.
  */
 export async function prepareLibraryRoot(input: string): Promise<{ path: string } | { error: string }> {
   let raw = input.trim();
@@ -39,6 +40,9 @@ export async function prepareLibraryRoot(input: string): Promise<{ path: string 
   const conflict = 'La cartella della libreria non puo\' coincidere con la cartella dei dati dell\'app, ne\' contenerla o stare al suo interno';
   const clash = (a: string, b: string) => isInside(a, b) || isInside(b, a);
   if (clash(root, DATA_DIR)) return { error: conflict };
+  // Le librerie aggiuntive stanno in LIBRARIES_ROOT: la principale non deve toccarla.
+  const conflictLibraries = 'La cartella della libreria non puo\' coincidere con la cartella delle librerie aggiuntive, ne\' contenerla o stare al suo interno';
+  if (clash(root, LIBRARIES_ROOT)) return { error: conflictLibraries };
 
   try {
     const stat = await fsp.stat(root);
@@ -60,6 +64,8 @@ export async function prepareLibraryRoot(input: string): Promise<{ path: string 
   }
 
   // Ora la cartella esiste: si confrontano anche i percorsi reali (link simbolici).
-  if (clash(await realOrSame(root), await realOrSame(DATA_DIR))) return { error: conflict };
+  const realRoot = await realOrSame(root);
+  if (clash(realRoot, await realOrSame(DATA_DIR))) return { error: conflict };
+  if (clash(realRoot, await realOrSame(LIBRARIES_ROOT))) return { error: conflictLibraries };
   return { path: root };
 }

@@ -22,6 +22,7 @@ ENV NODE_ENV=production \
     HOST=0.0.0.0 \
     DATA_DIR=/app/data \
     LIBRARY_ROOT=/app/library \
+    LIBRARIES_ROOT=/app/libraries \
     XDG_CACHE_HOME=/tmp/.cache
 
 COPY package.json package-lock.json ./
@@ -36,12 +37,12 @@ COPY --from=build /app/server/dist ./server/dist
 COPY --from=build /app/web/dist ./web/dist
 COPY shared ./shared
 
-# L'app gira come utente non root (node, uid 1000) e scrive solo in data e
-# library; il resto del file system puo' essere montato in sola lettura.
+# L'app gira come utente non root (node, uid 1000) e scrive solo in data,
+# library e libraries; il resto del file system puo' essere montato in sola lettura.
 # XDG_CACHE_HOME punta a /tmp (tmpfs) per la cache di fontconfig.
-RUN mkdir -p /app/data /app/library && chown -R node:node /app/data /app/library
+RUN mkdir -p /app/data /app/library /app/libraries && chown -R node:node /app/data /app/library /app/libraries
 USER node
-VOLUME ["/app/library", "/app/data"]
+VOLUME ["/app/library", "/app/libraries", "/app/data"]
 EXPOSE 8787
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s \

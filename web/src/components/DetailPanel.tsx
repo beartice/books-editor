@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useStore } from '../store';
-import { api } from '../api';
+import { api, withLibrary } from '../api';
 import {
   cn,
   formatDate,
@@ -16,6 +16,7 @@ import BookCover from './BookCover';
 import CoverEditor from './CoverEditor';
 import HighlightsTab from './HighlightsTab';
 import LanguagesSection from './LanguagesSection';
+import MoveBookMenu from './MoveBookMenu';
 import AppleBooksDialog from './AppleBooksDialog';
 import {
   IconClose,
@@ -416,7 +417,7 @@ export default function DetailPanel({
   const openInBooksUrl = (file: string) => {
     const params = new URLSearchParams({ meta: '1', inline: '1' });
     if (file !== meta.sourceFile) params.set('file', file);
-    return `/api/books/${encodeURIComponent(meta.id)}/download?${params.toString()}`;
+    return withLibrary(`/api/books/${encodeURIComponent(meta.id)}/download?${params.toString()}`);
   };
   const shareFiles = (meta.format === 'epub' && meta.sourceFile ? [meta.sourceFile, ...editions.map((e) => e.file)] : [])
     .filter((file, index, all) => file.toLowerCase().endsWith('.epub') && all.indexOf(file) === index);
@@ -1001,6 +1002,7 @@ export default function DetailPanel({
               </section>
 
               <div className="flex flex-wrap justify-end gap-2 border-t border-black/[0.06] pt-4">
+                <MoveBookMenu />
                 <button
                   onClick={async () => {
                     try {

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { withLibrary } from '../api';
 import { cn, initials } from '../utils';
 import { IconBook } from './icons';
 
@@ -59,11 +60,13 @@ export default function BookCover({
     >
       {showImage ? (
         <img
-          src={`/api/covers/${id}?v=${encodeURIComponent(coverFile!)}${
-            version ? `&t=${encodeURIComponent(version)}` : ''
-          }${size === 'small' ? '&w=120' : size === 'thumb' ? '&w=480' : ''}${
-            retried ? '&r=1' : ''
-          }`}
+          src={withLibrary(
+            `/api/covers/${id}?v=${encodeURIComponent(coverFile!)}${
+              version ? `&t=${encodeURIComponent(version)}` : ''
+            }${size === 'small' ? '&w=120' : size === 'thumb' ? '&w=480' : ''}${
+              retried ? '&r=1' : ''
+            }`,
+          )}
           alt={title}
           loading="lazy"
           onError={handleError}

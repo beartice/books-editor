@@ -159,6 +159,31 @@ Punti di forza di questo formato:
 - **Cartelle pronte**: se crei tu `library/Autore - Titolo/opera.epub`, la scansione
   la rileva e la cataloga.
 
+### Librerie multiple
+
+Nello stesso account puoi tenere piu' librerie separate (per esempio «Libri» e
+«Fanfiction»), ognuna con i suoi libri, l'indice, la cache delle serie, le
+statistiche e il nome. Si creano dalla barra laterale («Nuova libreria»), dove
+si possono anche rinominare ed eliminare (solo se vuote). Restano in comune
+l'account, le chiavi API (Google Books), Jellyfin e le altre impostazioni.
+
+- La **libreria principale** e' quella di sempre (`LIBRARY_ROOT`, `data/index.json`):
+  nessuna migrazione.
+- Le **librerie aggiuntive** stanno ognuna in una sottocartella di `LIBRARIES_ROOT`
+  (default `librerie/`); indice e cache in `data/libraries/<id>/`. L'elenco e'
+  in `data/libraries.json`.
+- La libreria aperta e' per scheda o dispositivo: sta nell'URL (`?lib=<id>`) e
+  in `localStorage` come ultima usata.
+- Dalla scheda di un libro, **Sposta in…** lo sposta (non lo copia) in
+  un'altra libreria. Fra volumi diversi (come in Docker) la cartella viene
+  copiata, verificata (file, dimensioni, sha256) e solo dopo cancellata dall'origine.
+- `LIBRARIES_ROOT` non deve coincidere con `LIBRARY_ROOT` o `DATA_DIR`, ne'
+  contenerli o stare al loro interno.
+
+Con Docker la cartella sull'host si sceglie con `LIBRARIES_PATH` nel `.env`
+(default `./librerie`, montata in `/app/libraries`); come le altre, deve
+appartenere all'uid 1000. Includila anche nel backup.
+
 ---
 
 ## Deployment sul tuo server
@@ -385,7 +410,7 @@ docker image prune -f
 
 ### 10. Backup
 
-Salva `data/` e `library/` (vedi la sezione Backup piu' sotto), per esempio con
+Salva `data/`, `library/` e `librerie/` (vedi la sezione Backup piu' sotto), per esempio con
 un `rsync` o `tar` periodico in cron verso un altro disco o un altro host. Il
 file `.env` va conservato a parte (contiene l'hash e il segreto di sessione).
 

@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { describeFilter, matchesQuickFilter, useStore } from '../store';
+import { describeFilter, libraryNameOf, matchesQuickFilter, useStore } from '../store';
 import type { Filters, QuickFilter } from '../store';
 import { cn, formatNumber } from '../utils';
 import { READING_STATUSES } from '@shared/types';
@@ -19,6 +19,7 @@ import {
   IconStar,
   IconLogout,
 } from './icons';
+import LibrariesSection from './LibrariesSection';
 
 interface Props {
   onOpenSettings: () => void;
@@ -93,7 +94,6 @@ export default function Sidebar({
     logout,
     books,
     stats,
-    settings,
     filters,
     toggleFilter,
     setFlagFilter,
@@ -157,7 +157,7 @@ export default function Sidebar({
     { quick: 'unread', label: 'Da leggere', icon: IconBookmark },
   ];
 
-  const libraryName = settings?.libraryName?.trim() || 'La mia libreria';
+  const libraryName = useStore(libraryNameOf);
 
   return (
     <>
@@ -196,6 +196,7 @@ export default function Sidebar({
         </div>
 
         <div className="mt-6 min-h-0 flex-1 overflow-y-auto pr-1">
+          <LibrariesSection onClose={onClose} />
           <p className="px-2.5 text-[9px] font-semibold uppercase tracking-[0.2em] text-ink-500">
             Menu
           </p>
@@ -482,6 +483,7 @@ function LibraryCard({
   books: number;
   fanfics: number;
 }) {
+  const libraryName = useStore(libraryNameOf);
   return (
     <div className="relative overflow-hidden rounded-[22px] bg-[#f1e5d9] p-4">
       <span className="pointer-events-none absolute -right-6 -top-8 h-24 w-24 rounded-full bg-white/40" />
@@ -495,7 +497,7 @@ function LibraryCard({
         </div>
         <div className="min-w-0">
           <p className="text-[9px] font-semibold uppercase tracking-[0.18em] text-ink-500">
-            La mia libreria
+            {libraryName}
           </p>
           <p className="mt-0.5 text-[19px] font-semibold leading-none text-ink-100">
             {formatNumber(total)}

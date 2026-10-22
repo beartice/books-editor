@@ -47,6 +47,10 @@ services:
       # La libreria (epub, copertine, book.json) vive qui. LIBRARY_PATH la
       # sposta, ad esempio su un disco dedicato.
       - "${LIBRARY_PATH:-./library}:/app/library"
+      # Le librerie aggiuntive (sezioni separate dello stesso account), una
+      # sottocartella ciascuna. LIBRARIES_PATH le sposta. Deve stare fuori da
+      # LIBRARY_PATH e da DATA_PATH.
+      - "${LIBRARIES_PATH:-./librerie}:/app/libraries"
       # Indice e impostazioni. DATA_PATH la sposta.
       - "${DATA_PATH:-./data}:/app/data"
       # Facoltativo: cartella da cui «Importa da percorso». Se la attivi,

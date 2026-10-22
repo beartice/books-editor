@@ -1,11 +1,19 @@
 import { create } from 'zustand';
-import { ApiError, api, setSetupRequiredHandler, setUnauthorizedHandler } from './api';
+import {
+  ApiError,
+  api,
+  setActiveLibrary,
+  setLibraryMissingHandler,
+  setSetupRequiredHandler,
+  setUnauthorizedHandler,
+} from './api';
 import { cn, lengthOf, READING_STATUS_LABEL } from './utils';
 import type {
   AppSettings,
   BookMeta,
   BookSummary,
   LibraryStats,
+  LibrarySummary,
   LookupResult,
   ReadingStatus,
   SortKey,
@@ -48,6 +56,43 @@ export interface ToastAction {
   label: string;
   value: string;
   primary?: boolean;
+}
+
+/** Ultima libreria usata su questo dispositivo. */
+const LIBRARY_STORAGE_KEY = 'books.library';
+const MAIN_LIBRARY_ID = 'main';
+
+function readStoredLibrary(): string | null {
+  try {
+    return window.localStorage.getItem(LIBRARY_STORAGE_KEY);
+  } catch {
+    return null;
+  }
+}
+
+function storeLibrary(id: string): void {
+  try {
+    window.localStorage.setItem(LIBRARY_STORAGE_KEY, id);
+  } catch {
+    /* localStorage non disponibile (navigazione privata): si perde solo la preferenza */
+  }
+}
+
+/** Libreria da aprire all'avvio: ?lib= dell'URL, poi l'ultima usata, poi la principale. */
+function initialLibraryId(): string {
+  const fromUrl = new URLSearchParams(window.location.search).get('lib')?.trim();
+  return fromUrl || readStoredLibrary() || MAIN_LIBRARY_ID;
+}
+
+/** Scrive `lib` nell'URL (senza ricaricare); `dropBook` toglie anche libro e scheda aperti. */
+function writeLibraryToUrl(id: string, dropBook: boolean): void {
+  const url = new URL(window.location.href);
+  url.searchParams.set('lib', id);
+  if (dropBook) {
+    url.searchParams.delete('book');
+    url.searchParams.delete('tab');
+  }
+  window.history.replaceState({}, '', url);
 }
 
 export type QuickFilter = 'all' | 'books' | 'fanfic' | 'favorites' | 'unread';
@@ -116,6 +161,9 @@ interface State {
   books: BookSummary[];
   stats: LibraryStats | null;
   settings: AppSettings | null;
+  /** Librerie dell'account (con il numero di opere) e quella aperta in questa scheda. */
+  libraries: LibrarySummary[];
+  libraryId: string;
   loading: boolean;
   busy: boolean;
   query: string;
@@ -149,6 +197,9 @@ interface State {
   loggedIn: () => Promise<void>;
   logout: () => Promise<void>;
   load: () => Promise<void>;
+  loadLibraries: () => Promise<void>;
+  setLibrary: (id: string, options?: { select?: string }) => Promise<void>;
+  moveBook: (toId: string) => Promise<void>;
   setQuery: (query: string) => void;
   setSort: (key: SortKey) => void;
   setView: (view: 'grid' | 'list') => void;
@@ -169,7 +220,11 @@ interface State {
   toast: (message: string, tone?: Toast['tone']) => void;
   dismissToast: (id: number) => void;
   answerToast: (id: number, value: string) => void;
-  confirm: (message: string, actions: ToastAction[]) => Promise<string | null>;
+  confirm: (
+    message: string,
+    actions: ToastAction[],
+    options?: { tone?: Toast['tone']; timeoutMs?: number },
+  ) => Promise<string | null>;
   setSettings: (settings: Partial<AppSettings>) => Promise<void>;
 }
 
@@ -275,6 +330,8 @@ export const useStore = create<State>((set, get) => ({
   books: [],
   stats: null,
   settings: null,
+  libraries: [],
+  libraryId: initialLibraryId(),
   loading: true,
   busy: false,
   query: '',
@@ -343,15 +400,81 @@ export const useStore = create<State>((set, get) => ({
 
   load: async () => {
     set({ loading: true });
+    const libraryId = get().libraryId;
     try {
-      const [{ books, stats }, settings] = await Promise.all([api.books(), api.settings()]);
-      set({ books, stats, settings, loading: false });
+      const [{ books, stats }, settings, libraries] = await Promise.all([
+        api.books(),
+        api.settings(),
+        api.libraries(),
+      ]);
+      // Nel frattempo si e' passati a un'altra libreria: questa risposta non serve piu'.
+      if (get().libraryId !== libraryId) return;
+      set({ books, stats, settings, libraries, loading: false });
     } catch (error) {
+      if (get().libraryId !== libraryId) return;
       set({ loading: false });
-      // Con 401 compare gia' la pagina di login.
-      if (!(error instanceof ApiError && error.status === 401)) {
+      // Con 401 compare gia' la pagina di login; con 404 «Libreria inesistente» si torna alla principale.
+      const missing = error instanceof ApiError && error.status === 404 && error.message === 'Libreria inesistente';
+      if (!(error instanceof ApiError && error.status === 401) && !missing) {
         get().toast((error as Error).message, 'error');
       }
+    }
+  },
+
+  loadLibraries: async () => {
+    try {
+      set({ libraries: await api.libraries() });
+    } catch (error) {
+      get().toast((error as Error).message, 'error');
+    }
+  },
+
+  setLibrary: async (id, options = {}) => {
+    setActiveLibrary(id);
+    storeLibrary(id);
+    writeLibraryToUrl(id, true);
+    // Selezione, filtri, ricerca e dettaglio sono della libreria che si lascia.
+    set({
+      libraryId: id,
+      books: [],
+      stats: null,
+      selectedId: null,
+      detail: null,
+      lookup: null,
+      lookupAttempted: false,
+      query: '',
+      filters: { ...EMPTY_FILTERS },
+      loading: true,
+    });
+    await get().load();
+    if (options.select) await get().select(options.select);
+  },
+
+  moveBook: async (toId) => {
+    const { detail, libraries } = get();
+    const target = libraries.find((library) => library.id === toId);
+    if (!detail || !target) return;
+    const answer = await get().confirm(`Spostare «${detail.title || 'Senza titolo'}» in «${target.name}»?`, [
+      { label: 'Sposta', value: 'move', primary: true },
+      { label: 'Annulla', value: 'cancel' },
+    ]);
+    if (answer !== 'move') return;
+    set({ busy: true });
+    try {
+      await api.moveBook(detail.id, toId);
+      set({ busy: false });
+      // Il libro non e' piu' qui: la scheda si chiude e liste e conteggi si ricaricano.
+      await get().select(null);
+      await get().load();
+      const open = await get().confirm(
+        `«${detail.title || 'Senza titolo'}» spostato in «${target.name}»`,
+        [{ label: `Apri «${target.name}»`, value: 'open', primary: true }],
+        { tone: 'success', timeoutMs: 9000 },
+      );
+      if (open === 'open') await get().setLibrary(toId, { select: detail.id });
+    } catch (error) {
+      set({ busy: false });
+      get().toast((error as Error).message, 'error');
     }
   },
 
@@ -621,13 +744,15 @@ export const useStore = create<State>((set, get) => ({
     set((state) => ({ toasts: state.toasts.filter((t) => t.id !== id) }));
   },
 
-  confirm: (message, actions) =>
+  confirm: (message, actions, options = {}) =>
     new Promise<string | null>((resolve) => {
       const id = ++toastId;
       toastResolvers.set(id, resolve);
       set((state) => ({
-        toasts: [...state.toasts, { id, message, tone: 'info', actions }],
+        toasts: [...state.toasts, { id, message, tone: options.tone ?? 'info', actions }],
       }));
+      // Di norma la domanda resta finche' non si risponde; un avviso con azione scade da solo.
+      if (options.timeoutMs) setTimeout(() => get().dismissToast(id), options.timeoutMs);
     }),
 
   setSettings: async (patch) => {
@@ -636,12 +761,24 @@ export const useStore = create<State>((set, get) => ({
       const settings = await api.updateSettings(patch);
       set({ settings, busy: false });
       get().toast('Impostazioni salvate', 'success');
+      // Il nome della libreria puo' essere cambiato da qui.
+      void get().loadLibraries();
     } catch (error) {
       set({ busy: false });
       get().toast((error as Error).message, 'error');
     }
   },
 }));
+
+/** Nome della libreria aperta (dall'elenco, altrimenti dalle impostazioni). */
+export function libraryNameOf(state: {
+  libraries: LibrarySummary[];
+  libraryId: string;
+  settings: AppSettings | null;
+}): string {
+  const fromList = state.libraries.find((library) => library.id === state.libraryId)?.name;
+  return fromList?.trim() || state.settings?.libraryName?.trim() || 'La mia libreria';
+}
 
 /** Etichette leggibili per i filtri laterali. */
 export function describeFilter(group: keyof Filters, value: string): string {
@@ -678,6 +815,15 @@ export const filterClasses = (active: boolean) =>
       ? 'bg-accent-500/10 font-medium text-accent-700'
       : 'text-ink-400 hover:bg-black/[0.035] hover:text-ink-100',
   );
+
+// La libreria aperta non esiste piu' (cancellata da un altro dispositivo): si torna alla principale.
+setActiveLibrary(useStore.getState().libraryId);
+writeLibraryToUrl(useStore.getState().libraryId, false);
+setLibraryMissingHandler(() => {
+  if (useStore.getState().libraryId === MAIN_LIBRARY_ID) return;
+  useStore.getState().toast('La libreria non esiste più: torno alla libreria principale', 'error');
+  void useStore.getState().setLibrary(MAIN_LIBRARY_ID);
+});
 
 // Una risposta 401 da qualunque chiamata riporta alla pagina di login.
 setSetupRequiredHandler(() => {

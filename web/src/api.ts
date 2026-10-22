@@ -7,6 +7,7 @@ import type {
   BookMeta,
   BookSummary,
   LibraryStats,
+  LibrarySummary,
   LookupResult,
   MetadataCandidate,
   ScanResult,
@@ -42,6 +43,32 @@ export function setSetupRequiredHandler(handler: () => void): void {
 function notifyUnauthorized(path: string, status: number, body?: unknown): void {
   if (status === 401 && path !== '/auth/login') unauthorizedHandler?.();
   if (status === 403 && (body as { setupRequired?: boolean } | undefined)?.setupRequired) setupRequiredHandler?.();
+  if (status === 404 && (body as { error?: string } | undefined)?.error === 'Libreria inesistente') {
+    libraryMissingHandler?.();
+  }
+}
+
+/** Libreria aperta in questa scheda: ogni richiesta la indica nell'header `X-Library`. */
+let activeLibraryId = 'main';
+export function setActiveLibrary(id: string): void {
+  activeLibraryId = id;
+}
+export function getActiveLibrary(): string {
+  return activeLibraryId;
+}
+
+/**
+ * Aggiunge `lib=<id>` a un URL `/api/...` usato da <img>, <a href> o window.open,
+ * che non possono mandare l'header.
+ */
+export function withLibrary(url: string): string {
+  return `${url}${url.includes('?') ? '&' : '?'}lib=${encodeURIComponent(activeLibraryId)}`;
+}
+
+/** Chiamato quando il server risponde 404 «Libreria inesistente» (libreria cancellata). */
+let libraryMissingHandler: (() => void) | null = null;
+export function setLibraryMissingHandler(handler: () => void): void {
+  libraryMissingHandler = handler;
 }
 
 /** Limite di upload dichiarato dal server (noto dopo aver letto le impostazioni). */
@@ -60,7 +87,10 @@ function errorMessage(status: number, body: { error?: string }): string {
 }
 
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
-  const headers: Record<string, string> = { ...(init.headers as Record<string, string>) };
+  const headers: Record<string, string> = {
+    ...(init.headers as Record<string, string>),
+    'X-Library': activeLibraryId,
+  };
   const isFormData = init.body instanceof FormData;
   // Fastify rifiuta un body vuoto con content-type json: lo impostiamo solo
   // quando c'è effettivamente un corpo.
@@ -82,7 +112,10 @@ async function requestBlob(
   init: RequestInit = {},
   fallbackName = 'storia-efp.odt',
 ): Promise<{ blob: Blob; filename: string; metadata: string | null }> {
-  const headers: Record<string, string> = { ...(init.headers as Record<string, string>) };
+  const headers: Record<string, string> = {
+    ...(init.headers as Record<string, string>),
+    'X-Library': activeLibraryId,
+  };
   if (init.body !== undefined && !headers['Content-Type']) {
     headers['Content-Type'] = 'application/json';
   }
@@ -187,6 +220,23 @@ export const api = {
   },
   updateSettings: (patch: Partial<AppSettings>) =>
     request<AppSettings>('/settings', { method: 'PUT', body: JSON.stringify(patch) }),
+
+  libraries: () => request<LibrarySummary[]>('/libraries'),
+  createLibrary: (name: string) =>
+    request<LibrarySummary>('/libraries', { method: 'POST', body: JSON.stringify({ name }) }),
+  renameLibrary: (id: string, name: string) =>
+    request<LibrarySummary>(`/libraries/${encodeURIComponent(id)}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ name }),
+    }),
+  deleteLibrary: (id: string) =>
+    request<{ ok: boolean }>(`/libraries/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+  /** Sposta il libro dalla libreria aperta a `to`. */
+  moveBook: (id: string, to: string) =>
+    request<{ ok: boolean; to: string; book: BookMeta }>(`/books/${id}/move`, {
+      method: 'POST',
+      body: JSON.stringify({ to }),
+    }),
 
   books: () => request<{ books: BookSummary[]; stats: LibraryStats }>('/books'),
   book: (id: string) => request<BookMeta>(`/books/${id}`),

@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { api, ApiError, tooLargeMessage } from '../api';
 import type { JellyfinImportState, JellyfinLibrary, JellyfinPreview } from '../api';
 import type { BookMeta, BookSummary } from '@shared/types';
-import { useStore } from '../store';
+import { libraryNameOf, useStore } from '../store';
 import { cn, languageLabel } from '../utils';
 import { IconClose, IconUpload } from './icons';
 
@@ -16,7 +16,8 @@ export default function ImportDialog({ onClose }: Props) {
   const [dragging, setDragging] = useState(false);
   const [efpUrl, setEfpUrl] = useState('');
   const [efpBusy, setEfpBusy] = useState<'import' | 'download' | null>(null);
-  const { load, select, toast, confirm, settings } = useStore();
+  const { load, select, toast, confirm, settings, libraries } = useStore();
+  const libraryName = useStore(libraryNameOf);
 
   // Jellyfin: librerie, analisi e job di import in background.
   const jellyfinReady = Boolean(settings?.jellyfinUrl && settings?.jellyfinApiKeySet);
@@ -250,7 +251,9 @@ export default function ImportDialog({ onClose }: Props) {
       <div className="absolute inset-0 bg-ink-950/25 backdrop-blur-[2px] animate-fade-in" onClick={onClose} />
       <div className="relative h-[100dvh] w-full max-w-lg animate-scale-in overflow-y-auto border-black/[0.07] bg-white p-5 shadow-panel sm:h-auto sm:max-h-[90vh] sm:rounded-[24px] sm:border sm:p-6">
         <div className="sticky top-0 z-10 -mx-5 -mt-5 mb-4 flex items-center justify-between bg-white px-5 py-3 sm:static sm:mx-0 sm:mt-0 sm:px-0 sm:py-0">
-          <h2 className="text-lg font-semibold text-ink-50">Importa un'opera</h2>
+          <h2 className="text-lg font-semibold text-ink-50">
+            {libraries.length > 1 ? `Importa in «${libraryName}»` : 'Importa un\'opera'}
+          </h2>
           <button onClick={onClose} className="btn-subtle h-10 w-10 px-0 sm:h-auto sm:w-auto sm:px-2" aria-label="Chiudi">
             <IconClose />
           </button>

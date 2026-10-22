@@ -267,7 +267,7 @@ export async function getBookMeta(id: string): Promise<BookMeta | null> {
   return index.find((b) => b.id === id) ?? null;
 }
 
-async function readBookJson(folderPath: string): Promise<BookMeta | null> {
+export async function readBookJson(folderPath: string): Promise<BookMeta | null> {
   try {
     const raw = await fsp.readFile(path.join(folderPath, BOOK_JSON), 'utf8');
     return { ...emptyMeta(), ...(JSON.parse(raw) as BookMeta) };

@@ -13,6 +13,17 @@ import {
   ensureDir,
 } from './config.js';
 import { prepareLibraryRoot } from './libraryRoot.js';
+import {
+  LibraryError,
+  allLibraryRoots,
+  createLibrary,
+  currentLibrary,
+  deleteLibrary,
+  isInsideFolder,
+  listLibraries,
+  renameLibrary,
+} from './libraries.js';
+import { moveBookToLibrary } from './libraryMove.js';
 import { loadIndex, loadSettings, saveIndex, saveSettings, toSummary } from './store.js';
 import {
   applyCandidate,
@@ -145,7 +156,8 @@ function publicSettings(settings: AppSettings): AppSettings {
   const { googleBooksApiKey, jellyfinApiKey, ...rest } = settings;
   return {
     ...rest,
-    libraryRootLocked: LIBRARY_ROOT_LOCKED,
+    // Fuori dalla principale la cartella la decide il server (LIBRARIES_ROOT).
+    libraryRootLocked: LIBRARY_ROOT_LOCKED || !currentLibrary().isMain,
     maxUploadMb: MAX_UPLOAD_MB,
     jellyfinApiKeySet: Boolean(jellyfinApiKey?.trim()),
     googleBooksApiKeySet: Boolean(googleBooksApiKey?.trim()),
@@ -255,6 +267,39 @@ async function stageUploadOrReply(
 export async function registerApi(app: FastifyInstance): Promise<void> {
   app.get('/api/health', async () => ({ ok: true, version: '1.0.0' }));
 
+  /* ------------------------------------------------------------ librerie -- */
+  const libraryFailure = (reply: FastifyReply, error: unknown) => {
+    if (error instanceof LibraryError) return reply.code(error.status).send({ error: error.message });
+    throw error;
+  };
+
+  app.get('/api/libraries', async () => listLibraries());
+
+  app.post<{ Body: { name?: string } }>('/api/libraries', async (request, reply) => {
+    try {
+      return await createLibrary(request.body?.name);
+    } catch (error) {
+      return libraryFailure(reply, error);
+    }
+  });
+
+  app.patch<{ Params: { id: string }; Body: { name?: string } }>('/api/libraries/:id', async (request, reply) => {
+    try {
+      return await renameLibrary(request.params.id, request.body?.name);
+    } catch (error) {
+      return libraryFailure(reply, error);
+    }
+  });
+
+  app.delete<{ Params: { id: string } }>('/api/libraries/:id', async (request, reply) => {
+    try {
+      await deleteLibrary(request.params.id);
+      return { ok: true };
+    } catch (error) {
+      return libraryFailure(reply, error);
+    }
+  });
+
   /* ------------------------------------------------------- impostazioni -- */
   app.get('/api/settings', async () => publicSettings(await loadSettings()));
 
@@ -285,7 +330,32 @@ export async function registerApi(app: FastifyInstance): Promise<void> {
       delete patch.googleBooksApiKey;
     }
     delete patch.libraryRootLocked;
-    if (LIBRARY_ROOT_LOCKED && patch.libraryRoot !== undefined) {
+    const library = currentLibrary();
+    let renamedTo: string | undefined;
+    if (!library.isMain) {
+      // Cartella e nome sono della libreria aperta, non del file globale.
+      if (patch.libraryRoot !== undefined) {
+        // Il client rimanda il valore invariato: va bene, e' solo un cambio a essere rifiutato.
+        if (path.resolve(String(patch.libraryRoot)) !== path.resolve(library.root)) {
+          return reply.code(400).send({
+            error: 'La cartella di questa libreria non si puo\' cambiare: sta nella cartella delle librerie del server',
+          });
+        }
+        delete patch.libraryRoot;
+      }
+      if (patch.libraryName !== undefined) {
+        const newName = typeof patch.libraryName === 'string' ? patch.libraryName.trim() : '';
+        delete patch.libraryName;
+        if (newName !== library.name) {
+          try {
+            renamedTo = (await renameLibrary(library.id, newName)).name;
+          } catch (error) {
+            if (error instanceof LibraryError) return reply.code(error.status).send({ error: error.message });
+            throw error;
+          }
+        }
+      }
+    } else if (LIBRARY_ROOT_LOCKED && patch.libraryRoot !== undefined) {
       // Il client rimanda il valore invariato: va bene, e' solo un cambio a essere rifiutato.
       if (path.resolve(String(patch.libraryRoot)) !== path.resolve(DEFAULT_LIBRARY_ROOT)) {
         return reply.code(400).send({
@@ -305,7 +375,8 @@ export async function registerApi(app: FastifyInstance): Promise<void> {
         ? Math.min(365, Math.max(1, days))
         : 30;
     }
-    return publicSettings(await saveSettings(patch));
+    const saved = await saveSettings(patch);
+    return publicSettings(renamedTo ? { ...saved, libraryName: renamedTo } : saved);
   });
 
   /* ----------------------------------------------------------- jellyfin -- */
@@ -393,6 +464,19 @@ export async function registerApi(app: FastifyInstance): Promise<void> {
       return { ok: true };
     },
   );
+
+  /** Sposta il libro (cartella compresa) in un'altra libreria; l'id non cambia. */
+  app.post<{ Params: { id: string }; Body: { to?: string } }>('/api/books/:id/move', async (request, reply) => {
+    const to = request.body?.to;
+    if (typeof to !== 'string' || !to) return reply.code(400).send({ error: 'Libreria di destinazione mancante' });
+    try {
+      const moved = await moveBookToLibrary(request.params.id, to);
+      await removeCoverThumbnails(request.params.id);
+      return { ok: true, to: moved.to, book: moved.book };
+    } catch (error) {
+      return libraryFailure(reply, error);
+    }
+  });
 
   /**
    * Sovrascrive copertina e metadati dentro il file EPUB con quelli della scheda.
@@ -878,6 +962,17 @@ export async function registerApi(app: FastifyInstance): Promise<void> {
       // importFile lo sposterebbe nella cartella nuova, lasciando l'altro libro
       // senza file. Per aggiornarne i dati c'e' «Rileggi i metadati dal file».
       const settings = await loadSettings();
+      // Un percorso dentro un'altra libreria non si importa: per portare un libro
+      // da una libreria all'altra c'e' «Sposta in...».
+      const current = currentLibrary();
+      for (const other of await allLibraryRoots()) {
+        if (other.id === current.id) continue;
+        if (await isInsideFolder(other.root, target)) {
+          return reply.code(400).send({
+            error: `Il file si trova nella libreria «${other.name}»: per portarlo qui usa «Sposta in...» sulla scheda del libro`,
+          });
+        }
+      }
       const relative = path.relative(path.resolve(settings.libraryRoot), path.resolve(target));
       if (relative && !relative.startsWith('..') && !path.isAbsolute(relative)) {
         const owner = (await loadIndex()).find(
