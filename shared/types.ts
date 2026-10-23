@@ -177,6 +177,17 @@ export type HighlightColor =
   | 'purple'
   | 'none';
 
+/** Tutti i colori ammessi, per validare le richieste. */
+export const HIGHLIGHT_COLORS: readonly HighlightColor[] = [
+  'underline',
+  'green',
+  'blue',
+  'yellow',
+  'pink',
+  'purple',
+  'none',
+];
+
 /**
  * Una sottolineatura/evidenziazione con eventuale nota. Il formato e' volutamente
  * semplice: la fonte di verita' resta il `book.json` del libro.
@@ -184,7 +195,13 @@ export type HighlightColor =
 export interface BookHighlight {
   /** Identificatore stabile (UUID Apple Books) per import ripetuti senza duplicati. */
   id: string;
-  source: 'applebooks' | 'manual';
+  /** 'reader' = creata nel lettore integrato; si modifica e si elimina da li'. */
+  source: 'applebooks' | 'manual' | 'reader';
+  /**
+   * File del libro (`sourceFile` o un'edizione) su cui vale `location`. Assente per
+   * quelle di Apple Books e per le vecchie: valgono per il file principale.
+   */
+  file?: string;
   text: string;
   note: string;
   color: HighlightColor;

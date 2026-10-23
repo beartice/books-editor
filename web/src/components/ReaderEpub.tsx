@@ -1,7 +1,11 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
-import ePub from 'epubjs';
-import type { Book, Location, NavItem, Rendition } from 'epubjs';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import ePub, { EpubCFI } from 'epubjs';
+import type { Book, Contents, Location, NavItem, Rendition } from 'epubjs';
+import { api } from '../api';
+import { useStore } from '../store';
 import { cn } from '../utils';
+import { HighlightMenu, HighlightsPanel, markStyle } from './ReaderHighlights';
+import type { HighlightMenuState, MenuRect } from './ReaderHighlights';
 import { usePositionSaver } from './readerSave';
 import {
   BAR_HEIGHT,
@@ -19,7 +23,7 @@ import {
   storeTheme,
 } from './ReaderParts';
 import type { ReaderTheme, ReaderThemeName } from './ReaderParts';
-import type { BookMeta } from '@shared/types';
+import type { BookHighlight, BookMeta, HighlightColor } from '@shared/types';
 
 /** Caratteri per ogni «posizione» usata per calcolare la percentuale. */
 const LOCATION_CHARS = 1600;
@@ -104,15 +108,55 @@ function storeLocations(key: string, value: string): void {
   }
 }
 
+/** Vista di epub.js che disegna i segni nel testo (l'API pubblica passa da `annotations`, che non tollera CFI non validi). */
+interface MarkView {
+  index: number;
+  contents?: Contents;
+  highlights: Record<string, unknown>;
+  underlines: Record<string, unknown>;
+  highlight: (cfi: string, data: object, cb: undefined, className: string, styles: object) => void;
+  underline: (cfi: string, data: object, cb: undefined, className: string, styles: object) => void;
+  unhighlight: (cfi: string) => void;
+  ununderline: (cfi: string) => void;
+}
+
+/** Posizione del capitolo nella spina per un CFI, -1 se il CFI non si legge. */
+function spinePosOf(cfi: string): number {
+  try {
+    const pos = new EpubCFI(cfi).spinePos;
+    return typeof pos === 'number' ? pos : -1;
+  } catch {
+    return -1;
+  }
+}
+
+/** Rettangolo di un intervallo, dalle coordinate dell'iframe a quelle della finestra. */
+function rectOf(range: Range, contents: Contents): MenuRect | null {
+  const rects = Array.from(range.getClientRects());
+  if (!rects.length) return null;
+  const frame = contents.window.frameElement as HTMLElement | null;
+  const offset = frame?.getBoundingClientRect();
+  const dx = offset?.left ?? 0;
+  const dy = offset?.top ?? 0;
+  return {
+    top: Math.min(...rects.map((rect) => rect.top)) + dy,
+    bottom: Math.max(...rects.map((rect) => rect.bottom)) + dy,
+    left: Math.min(...rects.map((rect) => rect.left)) + dx,
+    right: Math.max(...rects.map((rect) => rect.right)) + dx,
+  };
+}
+
 interface Props {
   meta: BookMeta;
   file: string;
   data: ArrayBuffer;
+  /** Posizione (CFI) da cui aprire, al posto dell'ultima salvata. */
+  startLocation?: string;
   onClose: () => void;
 }
 
 /** Lettore EPUB (epub.js): pagine, indice, dimensione del testo e temi. */
-export default function ReaderEpub({ meta, file, data, onClose }: Props) {
+export default function ReaderEpub({ meta, file, data, startLocation, onClose }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const renditionRef = useRef<Rendition | null>(null);
   const cfiRef = useRef<string | null>(null);
@@ -121,7 +165,13 @@ export default function ReaderEpub({ meta, file, data, onClose }: Props) {
   const [themeName, setThemeName] = useState<ReaderThemeName>(readStoredTheme);
   const [fontSize, setFontSize] = useState(readStoredFontSize);
   const [bars, setBars] = useState(true);
-  const [panel, setPanel] = useState<'toc' | 'settings' | null>(null);
+  const [panel, setPanel] = useState<'toc' | 'settings' | 'highlights' | null>(null);
+  const [highlights, setHighlights] = useState<BookHighlight[]>(meta.highlights ?? []);
+  const [menu, setMenu] = useState<HighlightMenuState | null>(null);
+  // Nota in scrittura per una nuova sottolineatura (null = campo chiuso).
+  const [draft, setDraft] = useState<string | null>(null);
+  const [menuError, setMenuError] = useState('');
+  const sheet = useMemo(() => window.matchMedia('(pointer: coarse)').matches, []);
   const [toc, setToc] = useState<TocEntry[]>([]);
   const [spineIndex, setSpineIndex] = useState(-1);
   const [percent, setPercent] = useState<number | null>(null);
@@ -130,8 +180,19 @@ export default function ReaderEpub({ meta, file, data, onClose }: Props) {
   const theme = READER_THEMES[themeName];
 
   // Valori letti dai gestori degli eventi dell'EPUB, che vivono piu' a lungo di un render.
-  const live = useRef({ panel, bars, onClose, saver, themeName, fontSize });
-  live.current = { panel, bars, onClose, saver, themeName, fontSize };
+  // Sottolineature di questo file: quelle senza `file` valgono per il principale.
+  const fileHighlights = useMemo(
+    () => highlights.filter((item) => (item.file ?? meta.sourceFile) === file),
+    [highlights, file, meta.sourceFile],
+  );
+  const live = useRef({ panel, bars, onClose, saver, themeName, fontSize, fileHighlights, menu, draft, toc: [] as TocEntry[] });
+  live.current = { panel, bars, onClose, saver, themeName, fontSize, fileHighlights, menu, draft, toc };
+  const paintAll = useRef<() => void>(() => undefined);
+  const closeMenu = useCallback(() => {
+    setMenu(null);
+    setDraft(null);
+    setMenuError('');
+  }, []);
 
   const go = useCallback((direction: 'next' | 'prev') => {
     const rendition = renditionRef.current;
@@ -187,8 +248,89 @@ export default function ReaderEpub({ meta, file, data, onClose }: Props) {
       return Math.min(100, ((location.start.index + (page - 1) / Math.max(1, total)) / spineLength()) * 100);
     };
 
+    // Sottolineature: disegnate direttamente sulle viste, saltando i CFI che epub.js non sa leggere.
+    const drawn = new Set<string>();
+    const skipped = new Set<string>();
+    const paintView = (view: MarkView) => {
+      if (!view.contents) return;
+      for (const cfi of Object.keys(view.highlights)) view.unhighlight(cfi);
+      for (const cfi of Object.keys(view.underlines)) view.ununderline(cfi);
+      for (const item of live.current.fileHighlights) {
+        if (spinePosOf(item.location) !== view.index) continue;
+        try {
+          // Un CFI che punta a un altro testo (file diverso da quello annotato in Apple Books) non si disegna.
+          const squash = (value: string) => value.replace(/\s+/g, ' ').trim();
+          const found = squash(view.contents.range(item.location).toString());
+          const wanted = squash(item.text);
+          if (!found || !(found.includes(wanted) || wanted.includes(found))) throw new Error('testo diverso');
+          const style = markStyle(item.color, live.current.themeName, READER_THEMES[live.current.themeName].text);
+          const className = style.kind === 'underline' ? 'books-ul' : 'books-hl';
+          if (style.kind === 'underline') view.underline(item.location, {}, undefined, className, style.attrs);
+          else view.highlight(item.location, {}, undefined, className, style.attrs);
+          drawn.add(item.id);
+          skipped.delete(item.id);
+        } catch {
+          if (!skipped.has(item.id)) {
+            skipped.add(item.id);
+            console.info(`[lettore] sottolineatura non applicabile (posizione non valida): ${item.id}`);
+          }
+        }
+      }
+    };
+    paintAll.current = () => {
+      if (cancelled) return;
+      // Prima dell'apertura il gestore delle viste non esiste ancora: niente da ridisegnare.
+      const views = rendition.views() as unknown as { all?: () => MarkView[] };
+      for (const view of views.all?.() ?? []) paintView(view);
+    };
+    rendition.hooks.render.register((view: MarkView) => paintView(view));
+
+    // Hit test: il tocco su una sottolineatura (coordinate dell'iframe) senza mettere gli SVG sopra il testo.
+    const hitTest = (contents: Contents, x: number, y: number): BookHighlight | null => {
+      let found: BookHighlight | null = null;
+      for (const item of live.current.fileHighlights) {
+        if (spinePosOf(item.location) !== contents.sectionIndex) continue;
+        try {
+          const rects = Array.from(contents.range(item.location).getClientRects());
+          const inside = rects.some((r) => x >= r.left - 2 && x <= r.right + 2 && y >= r.top - 2 && y <= r.bottom + 2);
+          // Se si sovrappongono, vince la propria (modificabile) su quella di Apple Books.
+          if (inside && !(found && found.source !== 'applebooks' && item.source === 'applebooks')) found = item;
+        } catch {
+          /* posizione non valida: non si tocca */
+        }
+      }
+      return found;
+    };
+
+    // Selezione di testo: compare il menu dei colori. Il listener sull'iframe lo attacca il genitore, senza script nel libro.
+    rendition.on('selected', (cfiRange: string, contents: Contents) => {
+      if (cancelled || live.current.draft !== null) return;
+      try {
+        const range = contents.range(cfiRange);
+        const text = range.toString().trim();
+        if (!text) return;
+        const index = contents.sectionIndex;
+        const chapter =
+          [...live.current.toc].reverse().find((entry) => entry.spineIndex >= 0 && entry.spineIndex <= index)?.label ?? '';
+        setMenuError('');
+        setMenu({ kind: 'new', cfi: cfiRange, text, chapter, rect: rectOf(range, contents) });
+      } catch {
+        /* selezione non convertibile in posizione: nessun menu */
+      }
+    });
+    rendition.hooks.content.register((contents: Contents) => {
+      contents.document.addEventListener('selectionchange', () => {
+        const selection = contents.window.getSelection();
+        if (selection && !selection.isCollapsed) return;
+        if (live.current.draft !== null) return;
+        setMenu((current) => (current?.kind === 'new' ? null : current));
+      });
+    });
+
     rendition.on('relocated', (location: Location) => {
       if (cancelled) return;
+      setMenu(null);
+      setDraft(null);
       cfiRef.current = location.start.cfi;
       setSpineIndex(location.start.index);
       const progress = progressOf(location);
@@ -252,7 +394,13 @@ export default function ReaderEpub({ meta, file, data, onClose }: Props) {
     // Tocco: terzo sinistro/destro girano pagina, il centro mostra o nasconde le barre. Swipe orizzontale: pagina.
     let touchStart: { x: number; y: number } | null = null;
     let swipedAt = 0;
+    // Un tocco che chiude il menu (o la selezione) non deve girare pagina.
+    let menuTouchedAt = 0;
+    rendition.on('mousedown', () => {
+      if (live.current.menu) menuTouchedAt = Date.now();
+    });
     rendition.on('touchstart', (event: TouchEvent) => {
+      if (live.current.menu) menuTouchedAt = Date.now();
       const touch = event.changedTouches[0];
       touchStart = touch ? { x: touch.clientX, y: touch.clientY } : null;
     });
@@ -267,10 +415,28 @@ export default function ReaderEpub({ meta, file, data, onClose }: Props) {
         go(dx < 0 ? 'next' : 'prev');
       }
     });
-    rendition.on('click', (event: MouseEvent, contents: { window: Window }) => {
-      if (Date.now() - swipedAt < 500) return;
+    rendition.on('click', (event: MouseEvent, contents: Contents) => {
+      if (Date.now() - swipedAt < 500 || Date.now() - menuTouchedAt < 600) return;
       if ((event.target as Element | null)?.closest?.('a[href]')) return;
       if (contents.window.getSelection()?.toString()) return;
+      const hit = hitTest(contents, event.clientX, event.clientY);
+      if (hit) {
+        setDraft(null);
+        setMenuError('');
+        let rect: MenuRect | null = null;
+        try {
+          rect = rectOf(contents.range(hit.location), contents);
+        } catch {
+          /* il menu si mostra senza ancoraggio */
+        }
+        setMenu({ kind: 'edit', id: hit.id, rect });
+        return;
+      }
+      if (live.current.menu) {
+        setMenu(null);
+        setDraft(null);
+        return;
+      }
       if (live.current.panel) {
         setPanel(null);
         return;
@@ -297,7 +463,7 @@ export default function ReaderEpub({ meta, file, data, onClose }: Props) {
       if (!shown && !cancelled) setError('Il file EPUB non si apre: potrebbe essere danneggiato.');
     }, OPEN_TIMEOUT_MS);
 
-    const saved = meta.readingPositions?.[file]?.location;
+    const saved = startLocation || meta.readingPositions?.[file]?.location;
     const opening = book.ready
       .then(() => rendition.display(saved || undefined).catch(() => rendition.display()))
       .then(() => {
@@ -331,6 +497,7 @@ export default function ReaderEpub({ meta, file, data, onClose }: Props) {
       window.clearTimeout(watchdog);
       window.removeEventListener('keydown', onKey);
       renditionRef.current = null;
+      paintAll.current = () => undefined;
       try {
         rendition.destroy();
         book.destroy();
@@ -346,7 +513,12 @@ export default function ReaderEpub({ meta, file, data, onClose }: Props) {
   useEffect(() => {
     renditionRef.current?.themes.select(themeName);
     storeTheme(themeName);
+    paintAll.current();
   }, [themeName]);
+  // Le sottolineature si ridisegnano a ogni modifica.
+  useEffect(() => {
+    paintAll.current();
+  }, [fileHighlights, opened]);
   useEffect(() => {
     const rendition = renditionRef.current;
     if (!rendition) return;
@@ -355,7 +527,91 @@ export default function ReaderEpub({ meta, file, data, onClose }: Props) {
     // Il testo si riadatta: si torna dov'era il lettore.
     const cfi = cfiRef.current;
     if (cfi) window.setTimeout(() => void renditionRef.current?.display(cfi), 50);
+    window.setTimeout(() => paintAll.current(), 400);
   }, [fontSize]);
+
+  /** Aggiorna elenco locale e store (scheda Sottolineature del dettaglio). */
+  const applyHighlights = (next: BookHighlight[]) => {
+    setHighlights(next);
+    useStore.getState().setHighlights(meta.id, next);
+  };
+
+  const clearSelection = () => {
+    try {
+      (renditionRef.current?.getContents() as unknown as Contents[] | undefined)?.forEach((contents) =>
+        contents.window.getSelection()?.removeAllRanges(),
+      );
+    } catch {
+      /* nessuna selezione da togliere */
+    }
+  };
+
+  const createHighlight = async (color: HighlightColor, note: string) => {
+    if (menu?.kind !== 'new') return;
+    setMenuError('');
+    try {
+      const created = await api.createHighlight(meta.id, {
+        file,
+        location: menu.cfi,
+        text: menu.text,
+        color,
+        note: note.trim() || undefined,
+        chapter: menu.chapter || undefined,
+      });
+      // Il server le tiene in ordine di lettura: si rilegge l'elenco, con ripiego sull'aggiunta in coda.
+      const list = await api
+        .book(meta.id)
+        .then((fresh) => fresh.highlights ?? [])
+        .catch(() => [...highlights, created]);
+      applyHighlights(list);
+      clearSelection();
+      closeMenu();
+    } catch (failure) {
+      setMenuError((failure as Error).message || 'Sottolineatura non salvata');
+    }
+  };
+
+  const updateHighlight = async (id: string, patch: { color?: HighlightColor; note?: string }) => {
+    setMenuError('');
+    try {
+      const updated = await api.updateHighlight(meta.id, id, patch);
+      applyHighlights(highlights.map((item) => (item.id === id ? updated : item)));
+    } catch (failure) {
+      setMenuError((failure as Error).message || 'Modifica non salvata');
+    }
+  };
+
+  const deleteHighlight = async (id: string) => {
+    setMenuError('');
+    try {
+      await api.deleteHighlight(meta.id, id);
+      applyHighlights(highlights.filter((item) => item.id !== id));
+      closeMenu();
+    } catch (failure) {
+      setMenuError((failure as Error).message || 'Eliminazione non riuscita');
+    }
+  };
+
+  const copyText = (text: string) => {
+    if (!navigator.clipboard) {
+      setMenuError('Appunti non disponibili in questo contesto');
+      return;
+    }
+    navigator.clipboard.writeText(text).then(
+      () => {
+        clearSelection();
+        closeMenu();
+      },
+      () => setMenuError('Impossibile copiare negli appunti'),
+    );
+  };
+
+  const goToHighlight = (item: BookHighlight) => {
+    setPanel(null);
+    void renditionRef.current?.display(item.location).catch(() => undefined);
+  };
+
+  const editing = menu?.kind === 'edit' ? highlights.find((item) => item.id === menu.id) ?? null : null;
 
   const chapter =
     spineIndex >= 0
@@ -407,6 +663,17 @@ export default function ReaderEpub({ meta, file, data, onClose }: Props) {
           disabled={toc.length === 0}
         >
           Indice
+        </ReaderButton>
+        <ReaderButton
+          onClick={() => setPanel(panel === 'highlights' ? null : 'highlights')}
+          aria-label="Sottolineature"
+          title="Sottolineature"
+        >
+          <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="m9 11-5 5v3h3l5-5" />
+            <path d="m14 6 4 4-6.5 6.5-4-4z" />
+            <path d="M4 22h16" />
+          </svg>
         </ReaderButton>
         <ReaderButton
           onClick={() => setPanel(panel === 'settings' ? null : 'settings')}
@@ -485,6 +752,39 @@ export default function ReaderEpub({ meta, file, data, onClose }: Props) {
             ))}
           </div>
         </div>
+      )}
+
+      {panel === 'highlights' && (
+        <HighlightsPanel
+          theme={theme}
+          highlights={fileHighlights}
+          safeTop={safeTop}
+          safeBottom={safeBottom}
+          onGo={goToHighlight}
+          onClose={() => setPanel(null)}
+        />
+      )}
+
+      {menu && (menu.kind === 'new' || editing) && (
+        <HighlightMenu
+          key={menu.kind === 'new' ? menu.cfi : menu.id}
+          theme={theme}
+          state={menu}
+          highlight={editing}
+          sheet={sheet}
+          draft={draft}
+          onDraft={setDraft}
+          error={menuError}
+          onCreate={(color, note) => void createHighlight(color, note)}
+          onCopy={() => menu.kind === 'new' && copyText(menu.text)}
+          onColor={(color) => editing && void updateHighlight(editing.id, { color })}
+          onNote={(note) => editing && void updateHighlight(editing.id, { note })}
+          onDelete={() => editing && void deleteHighlight(editing.id)}
+          onClose={() => {
+            if (menu.kind === 'new') clearSelection();
+            closeMenu();
+          }}
+        />
       )}
 
       {panel === 'toc' && (

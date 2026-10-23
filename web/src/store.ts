@@ -9,6 +9,7 @@ import {
 } from './api';
 import { cn, lengthOf, READING_STATUS_LABEL } from './utils';
 import type {
+  BookHighlight,
   AppSettings,
   BookMeta,
   BookSummary,
@@ -99,6 +100,8 @@ function writeLibraryToUrl(id: string, dropBook: boolean): void {
 export interface ReaderTarget {
   id: string;
   file: string;
+  /** Posizione (CFI) da cui aprire, al posto dell'ultima salvata; non sta nell'URL. */
+  location?: string;
 }
 
 function readerFromUrl(): ReaderTarget | null {
@@ -247,10 +250,14 @@ interface State {
   clearFilters: () => void;
   select: (id: string | null) => Promise<void>;
   setDetailTab: (tab: 'details' | 'highlights' | 'cover' | 'online') => void;
-  openReader: (id: string, file: string) => void;
+  openReader: (id: string, file: string, location?: string) => void;
   closeReader: () => void;
   /** Aggiorna in silenzio avanzamento e stato della card dopo un salvataggio del lettore. */
   applyReadingProgress: (id: string, progress: number) => void;
+  /** Sostituisce le sottolineature del libro nel dettaglio aperto (lettore e scheda Sottolineature). */
+  setHighlights: (id: string, highlights: BookHighlight[]) => void;
+  /** «Segna come non letto», con conferma: azzera stato, avanzamento, data di fine e posizioni. */
+  resetReading: () => Promise<void>;
   setSettingsOpen: (open: boolean) => void;
   patchDetail: (patch: Partial<BookMeta>) => Promise<void>;
   runLookup: () => Promise<void>;
@@ -607,12 +614,12 @@ export const useStore = create<State>((set, get) => ({
   setSettingsOpen: (settingsOpen) => set({ settingsOpen }),
 
   // Il lettore ha una voce di cronologia propria: «Indietro», Esc e lo swipe di iOS lo chiudono.
-  openReader: (id, file) => {
+  openReader: (id, file, location) => {
     const url = new URL(window.location.href);
     url.searchParams.set('read', id);
     url.searchParams.set('file', file);
     window.history.pushState({ reader: true }, '', url);
-    set({ reader: { id, file } });
+    set({ reader: { id, file, location } });
   },
 
   closeReader: () => {
@@ -644,6 +651,45 @@ export const useStore = create<State>((set, get) => ({
           ? { ...state.detail, readingProgress: percent, readingStatus: patchStatus(state.detail) }
           : state.detail,
     }));
+  },
+
+  setHighlights: (id, highlights) => {
+    set((state) => (state.detail?.id === id ? { detail: { ...state.detail, highlights } } : {}));
+  },
+
+  resetReading: async () => {
+    const { detail } = get();
+    if (!detail) return;
+    const answer = await get().confirm(
+      `Segnare «${detail.title || 'Senza titolo'}» come non letto? Avanzamento, data di fine lettura e posizione nel lettore verranno azzerati.`,
+      [
+        { label: 'Segna come non letto', value: 'reset', primary: true },
+        { label: 'Annulla', value: 'cancel' },
+      ],
+    );
+    if (answer !== 'reset') return;
+    set({ busy: true });
+    try {
+      const updated = await api.resetReading(detail.id);
+      set((state) => ({
+        busy: false,
+        detail: state.detail?.id === updated.id ? updated : state.detail,
+        books: state.books.map((book) =>
+          book.id === updated.id
+            ? {
+                ...book,
+                readingStatus: updated.readingStatus,
+                readingProgress: updated.readingProgress,
+                dateFinished: updated.dateFinished,
+              }
+            : book,
+        ),
+      }));
+      get().toast('Segnato come non letto', 'success');
+    } catch (error) {
+      set({ busy: false });
+      get().toast((error as Error).message, 'error');
+    }
   },
 
   patchDetail: async (patch) => {

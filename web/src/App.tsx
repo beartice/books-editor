@@ -253,7 +253,7 @@ export default function App() {
             </div>
           }
         >
-          <Reader key={`${reader.id}|${reader.file}`} id={reader.id} file={reader.file} />
+          <Reader key={`${reader.id}|${reader.file}`} id={reader.id} file={reader.file} location={reader.location} />
         </Suspense>
       )}
       <Toasts />

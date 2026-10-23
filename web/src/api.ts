@@ -4,10 +4,12 @@ import type {
   AppleBooksRawData,
   AppleBooksWriteField,
   AppleBooksWriteStatus,
+  BookHighlight,
   BookKind,
   BookMeta,
   BookSummary,
   ConversionSupport,
+  HighlightColor,
   LibraryStats,
   LibrarySummary,
   LookupResult,
@@ -274,6 +276,20 @@ export const api = {
   /** Salva la posizione di lettura del lettore integrato (il server aggiorna anche l'avanzamento). */
   saveReadingPosition: (id: string, body: { file: string; location: string; progress: number }) =>
     request<{ ok: true }>(`/books/${id}/reading-position`, { method: 'POST', body: JSON.stringify(body) }),
+  /** «Segna come non letto»: azzera stato, avanzamento, data di fine e posizioni del lettore. */
+  resetReading: (id: string) => request<BookMeta>(`/books/${id}/reset-reading`, { method: 'POST' }),
+  /** Sottolineature create nel lettore integrato (quelle di Apple Books non si modificano). */
+  createHighlight: (
+    id: string,
+    body: { file: string; location: string; text: string; color: HighlightColor; note?: string; chapter?: string },
+  ) => request<BookHighlight>(`/books/${id}/highlights`, { method: 'POST', body: JSON.stringify(body) }),
+  updateHighlight: (id: string, highlightId: string, patch: { color?: HighlightColor; note?: string }) =>
+    request<BookHighlight>(`/books/${id}/highlights/${encodeURIComponent(highlightId)}`, {
+      method: 'PATCH',
+      body: JSON.stringify(patch),
+    }),
+  deleteHighlight: (id: string, highlightId: string) =>
+    request<{ ok: true }>(`/books/${id}/highlights/${encodeURIComponent(highlightId)}`, { method: 'DELETE' }),
   writeEpub: (id: string) =>
     request<{ fields: string[]; cover: boolean; backup: string }>(`/books/${id}/write-epub`, {
       method: 'POST',

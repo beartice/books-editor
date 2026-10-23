@@ -110,7 +110,7 @@ function parseCfiForSorting(location: string): number[] {
   return numbers.length ? numbers : [Number.MAX_SAFE_INTEGER];
 }
 
-function compareLocations(a: BookHighlight, b: BookHighlight): number {
+export function compareLocations(a: BookHighlight, b: BookHighlight): number {
   const left = parseCfiForSorting(a.location);
   const right = parseCfiForSorting(b.location);
   for (let index = 0; index < Math.min(left.length, right.length); index += 1) {
@@ -410,22 +410,24 @@ export async function importAppleBooksFromRows(
     );
     const next = [...manual, ...highlights].sort(compareLocations);
     const identifiers = { ...book.identifiers, applebooks: apple.assetId };
-    const finishedAt = apple.finishedAt && titleRank > 0 ? apple.finishedAt : '';
-    let readingProgress = titleRank > 0 ? apple.readingProgress : null;
-    // Vince l'aggiornamento piu' recente: se l'avanzamento e' stato scritto dal
-    // lettore dopo l'ultima apertura in Apple Books, quello di Apple non lo sovrascrive.
+    // Vince l'aggiornamento piu' recente: se la lettura (avanzamento, stato) e' stata
+    // scritta qui dopo l'ultima apertura in Apple Books (lettore, modifica a mano,
+    // «Segna come non letto»), Apple non sovrascrive ne' avanzamento, ne' stato, ne'
+    // data di fine. Le sottolineature si importano sempre.
     // Senza `lastOpenedAt` (vecchie app Mac) si comporta come prima.
     const readerAt = Date.parse(book.readingProgressUpdatedAt ?? '');
     const appleAt = Date.parse(apple.lastOpenedAt);
     const readerWins = !Number.isNaN(readerAt) && !Number.isNaN(appleAt) && readerAt > appleAt;
-    if (readerWins) readingProgress = null;
+    const finishedAt = apple.finishedAt && titleRank > 0 && !readerWins ? apple.finishedAt : '';
+    // Apple segna «finito» ma lascia l'avanzamento sotto 1 (es. 0.985): con la data
+    // di fine il libro e' al 100%.
+    const readingProgress = finishedAt ? 100 : titleRank > 0 && !readerWins ? apple.readingProgress : null;
     const patch: Partial<BookMeta> = { highlights: next, identifiers };
     if (finishedAt) {
       patch.dateFinished = finishedAt;
       // La data di fine basta: Apple non compila piu' il flag "finito" per i
       // libri vecchi. Lo stato scelto a mano resta com'e'.
       if (
-        !readerWins &&
         (book.readingStatus === 'unread' || book.readingStatus === 'reading') &&
         book.fieldSource?.readingStatus !== 'manual'
       ) {

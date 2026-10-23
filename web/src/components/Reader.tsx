@@ -46,7 +46,7 @@ async function fetchBookFile(
 type Loaded = { meta: BookMeta; data: ArrayBuffer };
 
 /** Lettore integrato a tutto schermo: scarica il file e sceglie il lettore EPUB o PDF. */
-export default function Reader({ id, file }: { id: string; file: string }) {
+export default function Reader({ id, file, location }: { id: string; file: string; location?: string }) {
   const closeReader = useStore((state) => state.closeReader);
   const [loaded, setLoaded] = useState<Loaded | null>(null);
   const [error, setError] = useState('');
@@ -98,7 +98,7 @@ export default function Reader({ id, file }: { id: string; file: string }) {
   } else if (isPdf) {
     content = <ReaderPdf meta={loaded.meta} file={file} data={loaded.data} onClose={closeReader} />;
   } else {
-    content = <ReaderEpub meta={loaded.meta} file={file} data={loaded.data} onClose={closeReader} />;
+    content = <ReaderEpub meta={loaded.meta} file={file} data={loaded.data} startLocation={location} onClose={closeReader} />;
   }
 
   return (

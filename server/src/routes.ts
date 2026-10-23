@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
@@ -54,7 +55,7 @@ import { lookupFanficPage, lookupGoogleVolume, lookupOnline } from './providers/
 import { getCoverThumbnail, removeCoverThumbnails } from './thumbnails.js';
 import { lookupSeries, readCachedSeries } from './providers/series.js';
 import { readSeriesTotals, writeSeriesTotal } from './seriesCache.js';
-import { importAppleBooks, importAppleBooksFromRows, syncAppleBooksForBooks } from './appleBooks.js';
+import { compareLocations, importAppleBooks, importAppleBooksFromRows, syncAppleBooksForBooks } from './appleBooks.js';
 import { AppleBooksInputError, parseAppleBooksInput } from './appleBooksInput.js';
 import { buildEpubWithMetadata, writeEpubMetadata } from './epubWrite.js';
 import { AppleBooksError, appleBooksStatus, writeToAppleBooks, type AppleBooksField } from './appleBooksWrite.js';
@@ -67,8 +68,8 @@ import {
   startJellyfinImport,
 } from './jellyfin.js';
 import type { DuplicateMatch, PreparedImport } from './library.js';
-import { READING_STATUSES } from '../../shared/types.js';
-import type { AppSettings, BookMeta, MetadataCandidate, ReadingStatus } from '../../shared/types.js';
+import { HIGHLIGHT_COLORS, READING_STATUSES } from '../../shared/types.js';
+import type { AppSettings, BookHighlight, BookMeta, HighlightColor, MetadataCandidate, ReadingStatus } from '../../shared/types.js';
 
 const COVER_MIME: Record<string, string> = {
   '.jpg': 'image/jpeg',
@@ -712,6 +713,140 @@ export async function registerApi(app: FastifyInstance): Promise<void> {
       }
       try {
         await updateBook(book.id, patch, 'file', { touch: false });
+      } catch (error) {
+        return reply.code(404).send({ error: (error as Error).message });
+      }
+      return { ok: true };
+    },
+  );
+
+  /**
+   * «Segna come non letto»: azzera stato, avanzamento, data di fine e posizioni del
+   * lettore. Lo stato non resta «manuale», cosi' una lettura futura in Apple Books
+   * puo' aggiornarlo; `readingProgressUpdatedAt` = adesso fa vincere questo reset
+   * su un'apertura di Apple Books precedente. Nessuna ricerca online.
+   */
+  app.post<{ Params: { id: string } }>('/api/books/:id/reset-reading', async (request, reply) => {
+    try {
+      return await updateBook(
+        request.params.id,
+        {
+          readingStatus: 'unread',
+          readingProgress: null,
+          dateFinished: null,
+          readingPositions: {},
+          readingProgressUpdatedAt: new Date().toISOString(),
+        },
+        'file',
+        { touch: false, clearSources: ['readingStatus'] },
+      );
+    } catch (error) {
+      return reply.code(404).send({ error: (error as Error).message });
+    }
+  });
+
+  /* ---------------------------------------------------- sottolineature -- */
+  const APPLE_HIGHLIGHT_ERROR = 'Le sottolineature di Apple Books si modificano in Apple Books';
+
+  /** Salva l'elenco delle sottolineature, nell'ordine di lettura, senza ricerche online. */
+  const saveHighlights = (id: string, highlights: BookHighlight[]) =>
+    updateBook(id, { highlights: [...highlights].sort(compareLocations) }, 'manual', { touch: false });
+
+  app.post<{ Params: { id: string }; Body: Record<string, unknown> }>(
+    '/api/books/:id/highlights',
+    async (request, reply) => {
+      const book = await getBookMeta(request.params.id);
+      if (!book) return reply.code(404).send({ error: 'Libro non trovato' });
+      const { file, location, text, color, note, chapter } = request.body ?? {};
+      const epubs = [book.sourceFile, ...(book.editions ?? []).map((edition) => edition.file)].filter(
+        (name): name is string => Boolean(name) && /\.epub$/i.test(name as string),
+      );
+      if (typeof file !== 'string' || !epubs.includes(file)) {
+        return reply.code(400).send({ error: 'File EPUB non valido per questo libro' });
+      }
+      if (typeof location !== 'string' || location.length > 2000 || !location.startsWith('epubcfi(')) {
+        return reply.code(400).send({ error: 'Posizione non valida' });
+      }
+      if (typeof text !== 'string' || !text.trim() || text.length > 20000) {
+        return reply.code(400).send({ error: 'Testo della sottolineatura non valido (massimo 20000 caratteri)' });
+      }
+      if (typeof color !== 'string' || !HIGHLIGHT_COLORS.includes(color as HighlightColor)) {
+        return reply.code(400).send({ error: 'Colore non valido' });
+      }
+      if (note !== undefined && (typeof note !== 'string' || note.length > 10000)) {
+        return reply.code(400).send({ error: 'Nota non valida (massimo 10000 caratteri)' });
+      }
+      if (chapter !== undefined && (typeof chapter !== 'string' || chapter.length > 300)) {
+        return reply.code(400).send({ error: 'Capitolo non valido' });
+      }
+      const now = new Date().toISOString();
+      const highlight: BookHighlight = {
+        id: randomUUID(),
+        source: 'reader',
+        file,
+        text,
+        note: typeof note === 'string' ? note : '',
+        color: color as HighlightColor,
+        location,
+        chapter: typeof chapter === 'string' ? chapter : '',
+        createdAt: now,
+        modifiedAt: now,
+      };
+      try {
+        await saveHighlights(book.id, [...(book.highlights ?? []), highlight]);
+      } catch (error) {
+        return reply.code(404).send({ error: (error as Error).message });
+      }
+      return highlight;
+    },
+  );
+
+  app.patch<{ Params: { id: string; hid: string }; Body: { color?: unknown; note?: unknown } }>(
+    '/api/books/:id/highlights/:hid',
+    async (request, reply) => {
+      const book = await getBookMeta(request.params.id);
+      if (!book) return reply.code(404).send({ error: 'Libro non trovato' });
+      const current = (book.highlights ?? []).find((item) => item.id === request.params.hid);
+      if (!current) return reply.code(404).send({ error: 'Sottolineatura non trovata' });
+      if (current.source === 'applebooks') return reply.code(409).send({ error: APPLE_HIGHLIGHT_ERROR });
+      const { color, note } = request.body ?? {};
+      if (color !== undefined && (typeof color !== 'string' || !HIGHLIGHT_COLORS.includes(color as HighlightColor))) {
+        return reply.code(400).send({ error: 'Colore non valido' });
+      }
+      if (note !== undefined && (typeof note !== 'string' || note.length > 10000)) {
+        return reply.code(400).send({ error: 'Nota non valida (massimo 10000 caratteri)' });
+      }
+      const updated: BookHighlight = {
+        ...current,
+        ...(color !== undefined ? { color: color as HighlightColor } : {}),
+        ...(note !== undefined ? { note: note as string } : {}),
+        modifiedAt: new Date().toISOString(),
+      };
+      try {
+        await saveHighlights(
+          book.id,
+          (book.highlights ?? []).map((item) => (item.id === updated.id ? updated : item)),
+        );
+      } catch (error) {
+        return reply.code(404).send({ error: (error as Error).message });
+      }
+      return updated;
+    },
+  );
+
+  app.delete<{ Params: { id: string; hid: string } }>(
+    '/api/books/:id/highlights/:hid',
+    async (request, reply) => {
+      const book = await getBookMeta(request.params.id);
+      if (!book) return reply.code(404).send({ error: 'Libro non trovato' });
+      const current = (book.highlights ?? []).find((item) => item.id === request.params.hid);
+      if (!current) return reply.code(404).send({ error: 'Sottolineatura non trovata' });
+      if (current.source === 'applebooks') return reply.code(409).send({ error: APPLE_HIGHLIGHT_ERROR });
+      try {
+        await saveHighlights(
+          book.id,
+          (book.highlights ?? []).filter((item) => item.id !== current.id),
+        );
       } catch (error) {
         return reply.code(404).send({ error: (error as Error).message });
       }

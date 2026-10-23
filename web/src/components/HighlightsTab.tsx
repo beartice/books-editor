@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react';
+import { api } from '../api';
 import { useStore } from '../store';
 import { cn, formatDate } from '../utils';
 import type { BookHighlight, BookMeta, HighlightColor } from '@shared/types';
@@ -44,6 +45,32 @@ const COLOR_STYLES: Record<HighlightColor, { card: string; dot: string; label: s
     label: 'Senza colore',
   },
 };
+
+const SOURCE_LABEL: Record<BookHighlight['source'], string> = {
+  applebooks: 'Apple Books',
+  reader: 'Lettore',
+  manual: 'Manuale',
+};
+
+/** Elimina una sottolineatura non di Apple Books, dopo conferma, e aggiorna il dettaglio. */
+async function removeHighlight(meta: BookMeta, highlight: BookHighlight): Promise<void> {
+  const store = useStore.getState();
+  const answer = await store.confirm('Eliminare questa sottolineatura?', [
+    { label: 'Elimina', value: 'delete', primary: true },
+    { label: 'Annulla', value: 'cancel' },
+  ]);
+  if (answer !== 'delete') return;
+  try {
+    await api.deleteHighlight(meta.id, highlight.id);
+    store.setHighlights(
+      meta.id,
+      (meta.highlights ?? []).filter((item) => item.id !== highlight.id),
+    );
+    store.toast('Sottolineatura eliminata', 'success');
+  } catch (error) {
+    store.toast((error as Error).message, 'error');
+  }
+}
 
 function safeFileName(value: string): string {
   return value.replace(/[<>:"/\\|?*]/g, '-').replace(/\s+/g, ' ').trim() || 'libro';
@@ -115,8 +142,8 @@ export default function HighlightsTab({ meta }: Props) {
       <div className="rounded-xl border border-dashed border-black/[0.12] bg-ink-800/60 p-6 text-center">
         <p className="text-sm font-medium text-ink-200">Nessuna sottolineatura</p>
         <p className="mx-auto mt-1 max-w-sm text-[12px] leading-relaxed text-ink-500">
-          Le evidenziazioni e le note di Apple Books possono essere importate da
-          Impostazioni → Sottolineature da Apple Books.
+          Seleziona del testo nel lettore per sottolinearlo. Le evidenziazioni e le note di
+          Apple Books possono essere importate da Impostazioni → Sottolineature da Apple Books.
         </p>
         <button
           onClick={() => useStore.getState().setSettingsOpen(true)}
@@ -179,7 +206,9 @@ export default function HighlightsTab({ meta }: Props) {
             <strong className="text-ink-200">{withNotes}</strong> con nota
           </span>
         )}
-        <span className="text-ink-600">Importate da Apple Books</span>
+        <span className="text-ink-600">
+          {[...new Set(highlights.map((item) => SOURCE_LABEL[item.source] ?? SOURCE_LABEL.manual))].join(' · ')}
+        </span>
       </div>
 
       {filtered.length === 0 ? (
@@ -211,7 +240,26 @@ export default function HighlightsTab({ meta }: Props) {
                   />
                   {highlight.chapter && <span>{highlight.chapter}</span>}
                   {highlight.createdAt && <span>{formatDate(highlight.createdAt)}</span>}
+                  <span className="rounded bg-black/[0.05] px-1.5 py-0.5">
+                    {SOURCE_LABEL[highlight.source] ?? SOURCE_LABEL.manual}
+                  </span>
                   <span className="flex-1" />
+                  {highlight.source === 'reader' && highlight.file && (
+                    <button
+                      onClick={() => useStore.getState().openReader(meta.id, highlight.file as string, highlight.location)}
+                      className="min-h-[2.5rem] px-1 text-ink-500 underline decoration-ink-500/30 hover:text-ink-200 sm:min-h-0"
+                    >
+                      apri nel lettore
+                    </button>
+                  )}
+                  {highlight.source !== 'applebooks' && (
+                    <button
+                      onClick={() => void removeHighlight(meta, highlight)}
+                      className="min-h-[2.5rem] px-1 text-rose-600 underline decoration-rose-600/30 sm:min-h-0"
+                    >
+                      elimina
+                    </button>
+                  )}
                   <button
                     onClick={() =>
                       copyText(

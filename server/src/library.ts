@@ -877,7 +877,7 @@ export async function updateBook(
   id: string,
   patch: Partial<BookMeta>,
   source: 'manual' | 'online' | 'file' = 'manual',
-  options: { touch?: boolean } = {},
+  options: { touch?: boolean; clearSources?: string[] } = {},
 ): Promise<BookMeta> {
   const index = await loadIndex();
   const position = index.findIndex((book) => book.id === id);
@@ -903,6 +903,8 @@ export async function updateBook(
   for (const key of Object.keys(patch)) {
     fieldSource[key] = source;
   }
+  // Campi tornati «non decisi» (es. lo stato dopo «Segna come non letto»).
+  for (const key of options.clearSources ?? []) delete fieldSource[key];
   next.fieldSource = fieldSource;
 
   const settings = await loadSettings();

@@ -257,7 +257,7 @@ export default function DetailPanel({
 }: {
   onOpenSeries?: (series: string) => void;
 }) {
-  const { detail, select, patchDetail, detailTab, setDetailTab, busy, openReader } = useStore();
+  const { detail, select, patchDetail, detailTab, setDetailTab, busy, openReader, resetReading } = useStore();
   const { lookupAttempted, runLookup } = useStore();
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [downloading, setDownloading] = useState<string | null>(null);
@@ -954,6 +954,19 @@ export default function DetailPanel({
                     </option>
                   ))}
                 </select>
+                {(meta.readingStatus !== 'unread' ||
+                  meta.readingProgress != null ||
+                  meta.dateFinished ||
+                  Object.keys(meta.readingPositions ?? {}).length > 0) && (
+                  <button
+                    onClick={() => void resetReading()}
+                    disabled={busy}
+                    className="btn-ghost min-h-[2.5rem] text-[13px] sm:min-h-0"
+                    title="Azzera stato, avanzamento, data di fine e posizione nel lettore"
+                  >
+                    Segna come non letto
+                  </button>
+                )}
                 <button
                   onClick={() =>
                     commit({
