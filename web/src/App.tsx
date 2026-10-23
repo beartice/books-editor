@@ -163,7 +163,7 @@ export default function App() {
                     </h2>
                     <p className="mt-1 text-sm text-ink-500">
                       {visible.length === 1 ? '1 opera' : `${visible.length} opere`}
-                      {query ? ` per “${query}”` : ' tra i tuoi scaffali'}
+                      {query ? ` per “${query}” · per pertinenza` : ' tra i tuoi scaffali'}
                       {pageCount > 1 ? ` · pagina ${currentPage} di ${pageCount}` : ''}
                     </p>
                   </div>
