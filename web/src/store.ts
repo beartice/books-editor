@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { matchesQuery, searchScore } from './search';
 import {
   ApiError,
   api,
@@ -281,25 +282,6 @@ let toastId = 0;
 // Funzioni di risoluzione delle notifiche con azioni (fuori dallo stato).
 const toastResolvers = new Map<number, (value: string | null) => void>();
 
-function matchesQuery(book: BookSummary, query: string): boolean {
-  if (!query) return true;
-  const needle = query.toLowerCase().trim();
-  const haystack = [
-    book.title,
-    book.subtitle,
-    book.authors.join(' '),
-    book.series,
-    book.fandom,
-    book.tags.join(' '),
-    book.publisher,
-    book.description,
-    book.isbn,
-  ]
-    .join(' ')
-    .toLowerCase();
-  return needle.split(/\s+/).every((token) => haystack.includes(token));
-}
-
 function matchesFilters(book: BookSummary, filters: Filters): boolean {
   if (filters.kinds.length && !filters.kinds.includes(book.kind)) return false;
   if (filters.formats.length && !filters.formats.includes(book.format)) return false;
@@ -323,6 +305,12 @@ export function selectVisible(state: {
   const filtered = state.books.filter(
     (book) => matchesQuery(book, state.query) && matchesFilters(book, state.filters),
   );
+  // Con una ricerca i risultati vanno per pertinenza (titolo, poi autore); a parita'
+  // vale l'ordinamento scelto.
+  const scores = new Map<string, number>();
+  if (state.query.trim()) {
+    for (const book of filtered) scores.set(book.id, searchScore(book, state.query));
+  }
 
   const { key, asc } = state.sort;
   const direction = asc ? 1 : -1;
@@ -369,7 +357,8 @@ export function selectVisible(state: {
         result = collator.compare(a.title, b.title);
     }
     if (result === 0) result = collator.compare(a.title, b.title);
-    return result * direction;
+    const relevance = (scores.get(b.id) ?? 0) - (scores.get(a.id) ?? 0);
+    return relevance || result * direction;
   });
 
   return filtered;
