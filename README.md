@@ -15,6 +15,7 @@ Funziona in locale sul computer e si installa sul tuo server senza modifiche
 | | |
 |---|---|
 | **Metadati automatici** | Titolo, sottotitolo, autore/i, serie, editore, data, lingua, ISBN, descrizione, copertina, numero di parole, capitoli e pagine vengono letti dal file EPUB/PDF/DOCX/TXT. |
+| **Formati supportati** | EPUB, PDF, DOCX, TXT, MD e RTF si importano così come sono. MOBI, PRC, AZW, AZW3, FB2 e DJVU vengono **convertiti da soli** all'import: in EPUB con Calibre (`ebook-convert`), mentre un DJVU di sole scansioni diventa un PDF (djvulibre, `ddjvu`). Il file originale resta nella cartella del libro e si scarica dal menu di download (per esempio «MOBI originale»). Un file con DRM non si converte. Calibre e djvulibre sono nell'immagine Docker; fuori da Docker vanno installati (`ebook-convert` viene trovato anche nell'app calibre del Mac). Variabile `CONVERT_TIMEOUT_SEC` (default 600). |
 | **Metadati online** | Ricerca su Google Books e Open Library, con anteprima delle differenze e conferma esplicita prima di applicare. Puoi anche incollare il link di una specifica edizione Google Books per caricarne i dati esatti (utile se la ricerca non la trova o manca la descrizione). Per le fanfic con link in chiaro viene letta anche la pagina originale (AO3 / FanFiction.net); puoi incollare il link AO3 anche a mano. Se AO3 non risponde, restano validi i metadati letti dall'EPUB. |
 | **Compilazione automatica** | Opzione «Compila in automatico»: all'importazione i campi vuoti vengono completati online da soli, solo se il risultato combacia chiaramente con titolo e autore. |
 | **Fanfic** | Riconosce automaticamente il tipo di opera e ne estrae fandom, ship, personaggi, rating, stato, capitoli, parole, tag e serie dalle tabelle «Info» tipiche degli epub. Con il link AO3, la finestra **Serie** elenca anche le opere mancanti della serie. |
@@ -425,7 +426,7 @@ cartelle. Il container gira come utente non root, con file system in sola
 lettura, senza capability.
 
 Cosa resta a te: una password robusta, gli aggiornamenti di sistema, di Docker
-e dell'immagine (`docker compose up -d --build` ricostruisce da `node:22-alpine`),
+e dell'immagine (`docker compose up -d --build` ricostruisce da `node:22-trixie-slim`),
 il rinnovo del certificato e, facoltativamente, **fail2ban** sui log di nginx.
 
 Jellyfin: dal server deve essere raggiungibile all'indirizzo salvato nelle
@@ -468,6 +469,7 @@ l'app non vede l'IP reale ne' l'HTTPS.
 | `CORS_ORIGINS` | — | Lascia vuota (l'app e' same-origin) |
 | `GOOGLE_BOOKS_API_KEY` | — | Chiave Google Books (facoltativa; alternativa: impostarla dall'interfaccia) |
 | `MAX_UPLOAD_MB` | `300` | Dimensione massima (1-4096 MB) dei file caricati dal browser. Anche il reverse proxy deve accettarla: in nginx `client_max_body_size` un po' sopra questo valore (es. `310m`), altrimenti risponde 413 |
+| `CONVERT_TIMEOUT_SEC` | `600` | Tempo massimo di una conversione di formato (MOBI, AZW3, FB2, DJVU). Anche il reverse proxy deve attendere: in nginx `proxy_read_timeout` di almeno 900s sulle route di caricamento (vedi `deploy/nginx/books-editor.conf.example`) |
 | `LOG_LEVEL` | `info` | Livello di log |
 
 ### Google Books: errore HTTP 429

@@ -13,7 +13,10 @@ services:
     # privilegio, nessuna capability. L'app scrive solo nei volumi e in /tmp.
     read_only: true
     tmpfs:
-      - /tmp
+      # /tmp e' in RAM (conta nel limite di memoria): ci stanno solo cache e
+      # configurazione di Calibre e i file temporanei di fontconfig/canvas.
+      # I file delle conversioni stanno su disco, in .uploads nella libreria.
+      - /tmp:size=1g
     security_opt:
       - no-new-privileges:true
     cap_drop:
@@ -21,6 +24,8 @@ services:
     # Limite di memoria: l'import EFP e la lettura degli EPUB grandi possono
     # essere pesanti (un EPUB da 120 MB arriva a circa 420 MB). 2 GB bastano per
     # file fino a MAX_UPLOAD_MB=300 ed evitano che un picco saturi il server.
+    # La conversione con Calibre (MOBI, AZW3, FB2, DJVU) usa molta memoria: per
+    # file molto grandi alza MEM_LIMIT. Si converte un file alla volta.
     mem_limit: ${MEM_LIMIT:-2g}
     environment:
       NODE_ENV: production
@@ -43,6 +48,8 @@ services:
       # Dimensione massima di un file caricato dal browser (MB).
       MAX_UPLOAD_MB: ${MAX_UPLOAD_MB:-300}
       LOG_LEVEL: ${LOG_LEVEL:-info}
+      # Tempo massimo di una conversione di formato, in secondi (default 600).
+      CONVERT_TIMEOUT_SEC: ${CONVERT_TIMEOUT_SEC:-600}
     volumes:
       # La libreria (epub, copertine, book.json) vive qui. LIBRARY_PATH la
       # sposta, ad esempio su un disco dedicato.

@@ -25,6 +25,7 @@ import {
   renameLibrary,
 } from './libraries.js';
 import { moveBookToLibrary } from './libraryMove.js';
+import { conversionSupport } from './convert.js';
 import { loadIndex, loadSettings, saveIndex, saveSettings, toSummary } from './store.js';
 import {
   applyCandidate,
@@ -39,6 +40,7 @@ import {
   getBookRecord,
   importPath,
   listBooks,
+  prepareImport,
   mergeBooks,
   refreshFromFile,
   removeCover,
@@ -64,7 +66,7 @@ import {
   previewJellyfinImport,
   startJellyfinImport,
 } from './jellyfin.js';
-import type { DuplicateMatch } from './library.js';
+import type { DuplicateMatch, PreparedImport } from './library.js';
 import { READING_STATUSES } from '../../shared/types.js';
 import type { AppSettings, BookMeta, MetadataCandidate, ReadingStatus } from '../../shared/types.js';
 
@@ -89,6 +91,11 @@ const FILE_MIME: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
   '.mobi': 'application/x-mobipocket-ebook',
   '.azw3': 'application/vnd.amazon.ebook',
+  '.azw': 'application/vnd.amazon.ebook',
+  '.prc': 'application/x-mobipocket-ebook',
+  '.fb2': 'application/x-fictionbook+xml',
+  '.djvu': 'image/vnd.djvu',
+  '.djv': 'image/vnd.djvu',
 };
 
 /** Content-Disposition per un download (o `inline`), con fallback ASCII per i browser vecchi. */
@@ -109,7 +116,7 @@ function attachmentHeader(filename: string, disposition: 'attachment' | 'inline'
  */
 function downloadName(book: BookMeta, file: string): string {
   const edition = (book.editions ?? []).find((item) => item.file === file);
-  const isMain = file === book.sourceFile;
+  const isMain = file === book.sourceFile || file === book.originalFile;
   if (!isMain && !edition) return path.basename(file);
   const title = (edition ? edition.title : book.title).trim() || book.title.trim();
   if (!title) return path.basename(file);
@@ -268,6 +275,9 @@ async function stageUploadOrReply(
 
 export async function registerApi(app: FastifyInstance): Promise<void> {
   app.get('/api/health', async () => ({ ok: true, version: '1.0.0' }));
+
+  /** Formati che il server sa convertire in EPUB/PDF all'import (dipende dagli strumenti installati). */
+  app.get('/api/conversion', async () => conversionSupport());
 
   /* ------------------------------------------------------------ librerie -- */
   const libraryFailure = (reply: FastifyReply, error: unknown) => {
@@ -550,18 +560,22 @@ export async function registerApi(app: FastifyInstance): Promise<void> {
     if (!file) return reply.code(400).send({ error: 'Nessun file ricevuto' });
     const tempPath = await stageUploadOrReply(reply, file.filename, file.file);
     if (!tempPath) return reply;
+    let prepared: PreparedImport | null = null;
     try {
-      const same = await findIdenticalFile(book, tempPath);
+      // Un MOBI, AZW3, FB2... viene convertito: l'edizione e' il file convertito.
+      prepared = await prepareImport(tempPath, { force: true });
+      const same = await findIdenticalFile(book, prepared.path);
       if (same) {
         return reply.code(409).send({
           error: `Il file e' identico a «${same}», gia' presente nella scheda`,
           duplicate: { reason: 'file', book: toSummary(book) },
         });
       }
-      return await attachEdition(book.id, tempPath);
+      return await attachEdition(book.id, prepared.path);
     } catch (error) {
       return reply.code(400).send({ error: (error as Error).message });
     } finally {
+      await prepared?.cleanup();
       await fsp.rm(tempPath, { force: true });
     }
   });
@@ -602,7 +616,7 @@ export async function registerApi(app: FastifyInstance): Promise<void> {
     async (request, reply) => {
       const book = await getBookMeta(request.params.id);
       if (!book) return reply.code(404).send({ error: 'Libro non trovato' });
-      const allowed = [book.sourceFile, ...(book.extraFiles ?? [])].filter(
+      const allowed = [book.sourceFile, ...(book.extraFiles ?? []), book.originalFile].filter(
         (name): name is string => Boolean(name),
       );
       const file = request.query.file || book.sourceFile;
@@ -988,6 +1002,7 @@ export async function registerApi(app: FastifyInstance): Promise<void> {
     const guard = await guardImportPath(requested);
     if ('error' in guard) return reply.code(403).send({ error: guard.error });
     const target = guard.path;
+    let prepared: PreparedImport | null = null;
     try {
       // Un file (o una cartella) che appartiene gia' a un libro non si reimporta:
       // importFile lo sposterebbe nella cartella nuova, lasciando l'altro libro
@@ -1016,32 +1031,37 @@ export async function registerApi(app: FastifyInstance): Promise<void> {
         }
       }
       const attachTo = request.body?.attachTo;
+      const force = Boolean(request.body?.force);
+      // MOBI, AZW3, FB2, DJVU... vengono convertiti prima di tutti i controlli.
+      prepared = await prepareImport(target, { force: force || Boolean(attachTo) });
       if (attachTo) {
         // Il file diventa un'altra lingua di un libro esistente.
         const book = await getBookMeta(attachTo);
         if (!book) return reply.code(404).send({ error: 'Libro non trovato' });
-        const same = await findIdenticalFile(book, path.resolve(target));
+        const same = await findIdenticalFile(book, prepared.path);
         if (same) {
           return reply.code(409).send({
             error: `Il file e' identico a «${same}», gia' presente nella scheda`,
             duplicate: { reason: 'file', book: toSummary(book) },
           });
         }
-        return await attachEdition(attachTo, path.resolve(target));
+        return await attachEdition(attachTo, prepared.path);
       }
-      if (!request.body?.force) {
-        const duplicate = await findDuplicate(target);
+      if (!force) {
+        const duplicate = prepared.duplicate ?? (await findDuplicate(prepared.path));
         if (duplicate) {
           return reply.code(409).send(duplicateReply(duplicate));
         }
       }
-      const meta = await importPath(target);
+      const meta = await importPath(prepared.path, { original: prepared.original });
       // Appena aggiunto, il libro recupera da Apple Books sottolineature, note
       // e avanzamento: l'operazione non blocca l'import se Apple Books manca.
       await syncAppleBooksForBooks([meta.id]);
       return (await getBookMeta(meta.id)) ?? meta;
     } catch (error) {
       return reply.code(400).send({ error: (error as Error).message });
+    } finally {
+      await prepared?.cleanup();
     }
   });
 
@@ -1065,33 +1085,39 @@ export async function registerApi(app: FastifyInstance): Promise<void> {
       if (!file) return reply.code(400).send({ error: 'Nessun file ricevuto' });
       const tempPath = await stageUploadOrReply(reply, file.filename, file.file);
       if (!tempPath) return reply;
+      let prepared: PreparedImport | null = null;
       try {
         const attachTo = request.query?.attachTo;
+        const force = request.query?.force === '1';
+        // MOBI, AZW3, FB2, DJVU... vengono convertiti prima di tutti i controlli
+        // (puo' richiedere minuti: la risposta arriva a conversione finita).
+        prepared = await prepareImport(tempPath, { force: force || Boolean(attachTo) });
         if (attachTo) {
           // Il file diventa un'altra lingua di un libro esistente.
           const book = await getBookMeta(attachTo);
           if (!book) return reply.code(404).send({ error: 'Libro non trovato' });
-          const same = await findIdenticalFile(book, tempPath);
+          const same = await findIdenticalFile(book, prepared.path);
           if (same) {
             return reply.code(409).send({
               error: `Il file e' identico a «${same}», gia' presente nella scheda`,
               duplicate: { reason: 'file', book: toSummary(book) },
             });
           }
-          return await attachEdition(attachTo, tempPath);
+          return await attachEdition(attachTo, prepared.path);
         }
-        if (request.query?.force !== '1') {
-          const duplicate = await findDuplicate(tempPath);
+        if (!force) {
+          const duplicate = prepared.duplicate ?? (await findDuplicate(prepared.path));
           if (duplicate) {
             return reply.code(409).send(duplicateReply(duplicate));
           }
         }
-        const meta = await importPath(tempPath);
+        const meta = await importPath(prepared.path, { original: prepared.original });
         await syncAppleBooksForBooks([meta.id]);
         return (await getBookMeta(meta.id)) ?? meta;
       } catch (error) {
         return reply.code(400).send({ error: (error as Error).message });
       } finally {
+        await prepared?.cleanup();
         await fsp.rm(tempPath, { force: true });
       }
     },

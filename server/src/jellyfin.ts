@@ -11,8 +11,11 @@ import {
   attachEdition,
   importFile,
   normalizeText,
+  prepareImport,
   updateBook,
 } from './library.js';
+import type { PreparedImport } from './library.js';
+import { conversionSupport } from './convert.js';
 import { htmlToText } from './htmlText.js';
 import { syncAppleBooksForBooks } from './appleBooks.js';
 import type { BookMeta } from '../../shared/types.js';
@@ -363,7 +366,7 @@ function itemRawName(item: JellyfinItem): string {
 function extRank(ext: string): number {
   if (ext === '.epub') return 0;
   if (ext === '.pdf') return 1;
-  return MEDIA_EXTENSIONS.has(ext) ? 2 : 3;
+  return MEDIA_EXTENSIONS.has(ext) ? 2 : 3; // i formati da convertire (MOBI...) dopo quelli nativi
 }
 
 /**
@@ -405,6 +408,8 @@ function markInternalCopies(items: JellyfinItem[], results: JellyfinPreviewItem[
 }
 
 async function classify(items: JellyfinItem[]): Promise<JellyfinPreviewItem[]> {
+  // MOBI, AZW3, FB2, DJVU... si importano se sul server ci sono gli strumenti di conversione.
+  const convertible = new Set(conversionSupport().extensions);
   const index = await loadIndex();
   const known = new Map<string, BookMeta>();
   for (const book of index) {
@@ -426,7 +431,7 @@ async function classify(items: JellyfinItem[]): Promise<JellyfinPreviewItem[]> {
       result.push({ ...base, status: 'imported', existing: { id: imported.id, title: imported.title } });
       continue;
     }
-    if (!MEDIA_EXTENSIONS.has(ext)) {
+    if (!MEDIA_EXTENSIONS.has(ext) && !convertible.has(ext)) {
       result.push({ ...base, status: 'unsupported' });
       continue;
     }
@@ -505,13 +510,16 @@ async function importOne(
   const safeId = item.Id.replace(/[^A-Za-z0-9_-]/g, '_');
   const safeExt = itemExt(item).replace(/[^a-z0-9.]/g, '');
   const temp = path.join(staging, `jellyfin-${safeId}${safeExt}`);
+  let prepared: PreparedImport | null = null;
   try {
     await downloadItem(item.Id, temp);
+    // MOBI, AZW3, FB2, DJVU... vengono convertiti prima dei controlli.
+    prepared = await prepareImport(temp);
     // Stesso file (o stessi metadati interni) di un libro gia' presente.
-    const dup = await findDuplicate(temp);
+    const dup = prepared.duplicate ?? (await findDuplicate(prepared.path));
     if (dup?.reason === 'language') {
       // Stessa opera in un'altra lingua: diventa un'edizione, senza chiedere.
-      await attachEdition(dup.book.id, temp);
+      await attachEdition(dup.book.id, prepared.path);
       job.editions.push({ title, book: dup.book.title, language: dup.language ?? '' });
       return;
     }
@@ -519,7 +527,7 @@ async function importOne(
       job.duplicates.push({ title, existing: dup.book.title });
       return;
     }
-    const meta = await importFile(temp);
+    const meta = await importFile(prepared.path, undefined, { original: prepared.original });
     const patch: Partial<BookMeta> = {
       identifiers: { ...meta.identifiers, jellyfin: item.Id },
     };
@@ -541,6 +549,7 @@ async function importOne(
     const updated = await updateBook(meta.id, patch, 'online');
     job.imported.push({ id: updated.id, title: updated.title || title });
   } finally {
+    await prepared?.cleanup();
     await fsp.rm(temp, { force: true });
   }
 }

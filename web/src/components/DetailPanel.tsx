@@ -366,11 +366,15 @@ export default function DetailPanel({
     },
   ];
 
-  // File scaricabili: prima il principale, poi gli extra (es. l'ODT delle storie EFP).
-  const files = [meta.sourceFile, ...(meta.extraFiles ?? [])].filter(
+  // File scaricabili: prima il principale, poi gli extra (es. l'ODT delle storie EFP)
+  // e, se il libro e' stato convertito, il file originale (es. MOBI).
+  const files = [meta.sourceFile, ...(meta.extraFiles ?? []), meta.originalFile].filter(
     (file, index, all): file is string => Boolean(file) && all.indexOf(file) === index,
   );
-  const fileLabel = (file: string) => file.split('.').pop()?.toUpperCase() || 'file';
+  const fileLabel = (file: string) => {
+    const label = file.split('.').pop()?.toUpperCase() || 'file';
+    return file === meta.originalFile ? `${label} originale` : label;
+  };
 
   // Lingue: la principale piu' le edizioni; i file delle edizioni non sono pulsanti a parte.
   const editions = meta.editions ?? [];

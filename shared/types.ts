@@ -41,6 +41,12 @@ export interface BookMeta {
    * `language` e `title`). Gestito solo dal server: non si modifica via PATCH.
    */
   editions?: BookEdition[];
+  /**
+   * Originale da cui il file principale e' stato convertito (MOBI, AZW3, FB2,
+   * DJVU...), relativo alla cartella del libro. Non e' una lingua ne' un file
+   * extra: si scarica dal menu del libro. Gestito solo dal server.
+   */
+  originalFile?: string | null;
   /** Copertina, relativa alla cartella del libro. */
   coverFile: string | null;
 
@@ -100,6 +106,14 @@ export interface BookMeta {
    * a mano, 'online' = preso da un provider esterno, 'ai' = inferito.
    */
   fieldSource: Record<string, string>;
+}
+
+/** Formati che il server sa convertire in EPUB/PDF all'import, secondo gli strumenti installati. */
+export interface ConversionSupport {
+  calibre: boolean;
+  djvu: boolean;
+  /** Estensioni con il punto (".mobi", ".djvu"...). */
+  extensions: string[];
 }
 
 export interface BookSummary {

@@ -15,6 +15,7 @@ import { loadIndex, loadSettings, saveIndex, toSummary } from './store.js';
 import { htmlToText } from './htmlText.js';
 import { detectLanguage, toIso6391 } from './language.js';
 import { normalizeTags } from './tags.js';
+import { convertToReadable, isConvertible } from './convert.js';
 import { lookupOnline, pickBestCandidate } from './providers/index.js';
 import type { BookEdition, BookMeta, BookSummary, MetadataCandidate, ScanResult } from '../../shared/types.js';
 
@@ -154,12 +155,20 @@ function fanficUrlsFromIdentifiers(
   return { ao3Url, ffnetUrl };
 }
 
+/**
+ * Titolo di ripiego dal nome del file, senza il prefisso numerico che lo staging
+ * degli upload aggiunge (`1792773097517-scansione.pdf` → `scansione`).
+ */
+export function titleFromFileName(fileName: string): string {
+  return path.basename(fileName, path.extname(fileName)).replace(/^\d{10,}-/, '');
+}
+
 /** Costruisce i metadati di un libro a partire dall'estrazione. */
 export function buildMetaFromInfo(
   info: ExtractedInfo,
   fileName: string,
 ): Partial<BookMeta> {
-  const baseTitle = info.title || path.basename(fileName, path.extname(fileName));
+  const baseTitle = info.title || titleFromFileName(fileName);
   const { series: seriesFromTitle, index: indexFromTitle } = parseSeriesFromTitle(baseTitle);
 
   // `infoText` e' spesso gia' incluso in `headText`: evitiamo di analizzare
@@ -444,12 +453,62 @@ function stripVolatile(meta: BookMeta): Omit<BookMeta, 'dateModified'> {
   return rest;
 }
 
+/** Cartella di lavoro per una conversione: sta in `.uploads` (su disco, non nel tmpfs di /tmp). */
+async function makeWorkDir(): Promise<string> {
+  const settings = await loadSettings();
+  const staging = path.join(settings.libraryRoot, '.uploads');
+  await fsp.mkdir(staging, { recursive: true });
+  return fsp.mkdtemp(path.join(staging, 'conv-'));
+}
+
+/** File pronto da importare: l'originale, oppure il risultato della conversione. */
+export interface PreparedImport {
+  /** File da controllare e importare (EPUB/PDF se il sorgente era convertibile). */
+  path: string;
+  /** File originale da conservare nella cartella del libro; null se non c'e' stata conversione. */
+  original: string | null;
+  /** Se l'originale e' identico a un file gia' in libreria la conversione non parte e c'e' questo. */
+  duplicate: DuplicateMatch | null;
+  /** Cancella la cartella di lavoro: va chiamata sempre, anche in caso di errore. */
+  cleanup: () => Promise<void>;
+}
+
+/**
+ * Prepara un file per l'import. MOBI, AZW3, FB2, DJVU... vengono convertiti in
+ * EPUB o PDF (lo lancia `ConversionError` con un messaggio per l'utente); gli
+ * altri file passano invariati. Con `force` il controllo del duplicato per hash
+ * dell'originale e' saltato.
+ */
+export async function prepareImport(
+  target: string,
+  options: { force?: boolean } = {},
+): Promise<PreparedImport> {
+  const absolute = path.resolve(target);
+  if (!isConvertible(absolute)) {
+    return { path: absolute, original: null, duplicate: null, cleanup: async () => undefined };
+  }
+  if (!options.force) {
+    // Lo stesso MOBI caricato due volte: si riconosce prima di spendere minuti di conversione.
+    const duplicate = await findDuplicate(absolute, { hashOnly: true });
+    if (duplicate) return { path: absolute, original: absolute, duplicate, cleanup: async () => undefined };
+  }
+  const workDir = await makeWorkDir();
+  const cleanup = () => fsp.rm(workDir, { recursive: true, force: true });
+  try {
+    const converted = await convertToReadable(absolute, workDir);
+    return { path: converted.outputPath, original: absolute, duplicate: null, cleanup };
+  } catch (error) {
+    await cleanup();
+    throw error;
+  }
+}
+
 /**
  * Importa un singolo file (o cartella) nella libreria.
  * Se il file e' gia' dentro la libreria, viene importato cosi' com'e'.
+ * `options.original` e' l'originale di un file gia' convertito (vedi `prepareImport`).
  */
-export async function importPath(target: string): Promise<BookMeta> {
-  const settings = await loadSettings();
+export async function importPath(target: string, options: { original?: string | null } = {}): Promise<BookMeta> {
   const absolute = path.resolve(target);
   const stats = await fsp.stat(absolute);
   if (stats.isDirectory()) {
@@ -457,7 +516,16 @@ export async function importPath(target: string): Promise<BookMeta> {
     if (!media.length) throw new Error('Nessun file leggibile nella cartella');
     return importFile(path.join(absolute, media[0]), absolute);
   }
-  return importFile(absolute);
+  // Un formato da convertire non arriva mai a importFile senza conversione.
+  if (isConvertible(absolute) && !options.original) {
+    const prepared = await prepareImport(absolute, { force: true });
+    try {
+      return await importFile(prepared.path, undefined, { original: prepared.original });
+    } finally {
+      await prepared.cleanup();
+    }
+  }
+  return importFile(absolute, undefined, { original: options.original });
 }
 
 export async function uniqueFolderName(root: string, base: string): Promise<string> {
@@ -512,8 +580,12 @@ function normalizeIsbn(value: string): string {
  * Cerca nella libreria un'opera gia' presente, equivalente al file indicato
  * (o al primo file leggibile, se e' una cartella). Controlli in ordine:
  * stesso file (contenuto), stesso ISBN, stesso titolo e primo autore.
+ * Con `hashOnly` solo il primo (per i file da convertire, prima della conversione).
  */
-export async function findDuplicate(target: string): Promise<DuplicateMatch | null> {
+export async function findDuplicate(
+  target: string,
+  options: { hashOnly?: boolean } = {},
+): Promise<DuplicateMatch | null> {
   let filePath = path.resolve(target);
   const targetStat = await fsp.stat(filePath);
   if (targetStat.isDirectory()) {
@@ -529,7 +601,7 @@ export async function findDuplicate(target: string): Promise<DuplicateMatch | nu
   // 1) Stesso file: prima la dimensione, l'hash solo se coincide.
   let hash: string | null = null;
   for (const book of index) {
-    for (const name of [book.sourceFile, ...(book.extraFiles ?? [])]) {
+    for (const name of [book.sourceFile, ...(book.extraFiles ?? []), book.originalFile]) {
       if (!name) continue;
       const candidate = path.join(root, book.folder, name);
       try {
@@ -542,6 +614,8 @@ export async function findDuplicate(target: string): Promise<DuplicateMatch | nu
       }
     }
   }
+
+  if (options.hashOnly) return null;
 
   // 2) e 3) Metadati: se l'estrazione fallisce resta solo il controllo sul file.
   let built: Partial<BookMeta>;
@@ -695,7 +769,16 @@ export async function findDuplicateByMeta(meta: {
   return null;
 }
 
-export async function importFile(filePath: string, intoFolder?: string): Promise<BookMeta> {
+/**
+ * Importa un file nella libreria. `options.original` e' il file da cui
+ * `filePath` e' stato convertito: viene copiato nella cartella del libro e
+ * registrato in `originalFile` (non e' una lingua, ne' un file extra).
+ */
+export async function importFile(
+  filePath: string,
+  intoFolder?: string,
+  options: { original?: string | null } = {},
+): Promise<BookMeta> {
   const settings = await loadSettings();
   const root = settings.libraryRoot;
   const stat = await fsp.stat(filePath);
@@ -705,7 +788,7 @@ export async function importFile(filePath: string, intoFolder?: string): Promise
   const built = buildMetaFromInfo(info, path.basename(filePath));
 
   const authors = built.authors?.length ? built.authors.join(', ') : '';
-  const title = built.title || path.basename(filePath, path.extname(filePath));
+  const title = built.title || titleFromFileName(filePath);
   const baseName = authors ? `${authors} - ${title}` : title;
   let folderName = sanitizeFolderName(baseName);
 
@@ -748,10 +831,17 @@ export async function importFile(filePath: string, intoFolder?: string): Promise
     }
   }
 
+  let originalName: string | null = null;
+  if (options.original) {
+    originalName = await freeFileName(targetFolder, path.basename(options.original));
+    await fsp.copyFile(options.original, path.join(targetFolder, originalName));
+  }
+
   const meta = emptyMeta();
   Object.assign(meta, built);
   meta.folder = path.relative(root, targetFolder);
   meta.sourceFile = fileName;
+  if (originalName) meta.originalFile = originalName;
   meta.format = detectFormat(fileName);
   meta.extraFiles = (await listMediaFiles(targetFolder)).filter((f) => f !== fileName);
   meta.fieldSource = Object.fromEntries(Object.keys(built).map((key) => [key, 'file']));
@@ -1183,6 +1273,15 @@ export async function mergeBooks(targetId: string, otherId: string): Promise<Mer
     newEditions.push({ file: finalName, language: item.language, title: item.title });
   }
 
+  // Il file originale di una conversione (MOBI, ...) passa al target solo se questo non ne ha uno.
+  let movedOriginal: string | null = null;
+  if (other.originalFile && !target.originalFile) {
+    const from = path.join(otherPath, other.originalFile);
+    if (await fsp.stat(from).then((s) => s.isFile()).catch(() => false)) {
+      movedOriginal = await moveInto(from, targetPath, other.originalFile);
+    }
+  }
+
   // Backup dell'altra scheda: restano recuperabili nella cartella del target.
   const otherBackup = path.join(otherPath, BACKUP_DIR);
   const backupEntries = await fsp.readdir(otherBackup, { withFileTypes: true }).catch(() => []);
@@ -1257,6 +1356,7 @@ export async function mergeBooks(targetId: string, otherId: string): Promise<Mer
     }
   }
 
+  if (movedOriginal) merged.originalFile = movedOriginal;
   merged.editions = [...(target.editions ?? []), ...newEditions];
   merged.extraFiles = [...(target.extraFiles ?? []), ...newEditions.map((e) => e.file)];
   merged.fieldSource = fieldSource;

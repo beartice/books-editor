@@ -110,6 +110,16 @@ server {
         proxy_pass http://127.0.0.1:8787;
     }
 
+    # Caricamento di file: l'app puo' convertirli (MOBI, AZW3, FB2, DJVU...) prima
+    # di rispondere, e la conversione dura fino a 10 minuti (CONVERT_TIMEOUT_SEC).
+    # Stesso limite delle altre API; copre anche l'aggiunta di una lingua.
+    location ~ ^/api/(library/upload|books/[^/]+/editions)$ {
+        limit_req zone=books_api burst=50 nodelay;
+        proxy_read_timeout 900s;
+        proxy_send_timeout 900s;
+        proxy_pass http://127.0.0.1:8787;
+    }
+
     # API: limite largo (20 r/s, burst 50).
     location /api/ {
         limit_req zone=books_api burst=50 nodelay;

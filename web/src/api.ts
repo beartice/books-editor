@@ -7,6 +7,7 @@ import type {
   BookKind,
   BookMeta,
   BookSummary,
+  ConversionSupport,
   LibraryStats,
   LibrarySummary,
   LookupResult,
@@ -360,6 +361,7 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ url, format }),
     }),
+  conversion: () => request<ConversionSupport>('/conversion'),
   uploadFile: async (file: File, options: { force?: boolean; attachTo?: string } = {}) => {
     const form = new FormData();
     form.append('file', file);

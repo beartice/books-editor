@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { api, ApiError, tooLargeMessage } from '../api';
 import type { JellyfinImportState, JellyfinLibrary, JellyfinPreview } from '../api';
-import type { BookMeta, BookSummary } from '@shared/types';
+import type { BookMeta, BookSummary, ConversionSupport } from '@shared/types';
 import { syncAppleBooksFromApp } from '../desktop';
 import { libraryNameOf, useStore } from '../store';
 import { cn, languageLabel } from '../utils';
@@ -15,6 +15,9 @@ export default function ImportDialog({ onClose }: Props) {
   const [path, setPath] = useState('');
   const [busy, setBusy] = useState(false);
   const [dragging, setDragging] = useState(false);
+  // Formati convertiti dal server (MOBI, AZW3, FB2, DJVU...) e conversione in corso.
+  const [conversion, setConversion] = useState<ConversionSupport | null>(null);
+  const [converting, setConverting] = useState(false);
   const [efpUrl, setEfpUrl] = useState('');
   const [efpBusy, setEfpBusy] = useState<'import' | 'download' | null>(null);
   const { load, select, toast, confirm, settings, libraries } = useStore();
@@ -27,6 +30,10 @@ export default function ImportDialog({ onClose }: Props) {
   const [jfPreview, setJfPreview] = useState<JellyfinPreview | null>(null);
   const [jfBusy, setJfBusy] = useState<'libraries' | 'preview' | null>(null);
   const [jfJob, setJfJob] = useState<JellyfinImportState | null>(null);
+
+  useEffect(() => {
+    api.conversion().then(setConversion).catch(() => undefined);
+  }, []);
 
   // Carica le librerie Jellyfin e recupera un eventuale job ancora in corso.
   useEffect(() => {
@@ -199,13 +206,31 @@ export default function ImportDialog({ onClose }: Props) {
     await runImport((options) => api.importPath(value.trim(), options));
   };
 
+  // «MOBI / AZW3 / FB2 / DJVU…»: un'etichetta per formato, senza ripetere le varianti.
+  const conversionLabels = [
+    ...new Set(
+      (conversion?.extensions ?? [])
+        .filter((ext) => ext !== '.prc' && ext !== '.azw')
+        .map((ext) => (ext === '.djv' ? 'DJVU' : ext.slice(1).toUpperCase())),
+    ),
+  ];
+  const formatList = ['EPUB', 'PDF', 'DOCX', 'TXT', ...conversionLabels].join(' / ');
+
   const upload = async (file: File) => {
     // Se il limite del server e' noto, si evita di caricare un file che verrebbe rifiutato.
     if (settings?.maxUploadMb && file.size > settings.maxUploadMb * 1024 * 1024) {
       toast(tooLargeMessage(), 'error');
       return;
     }
-    await runImport((options) => api.uploadFile(file, options));
+    // Un formato da convertire puo' richiedere minuti: la risposta arriva a conversione finita.
+    const dot = file.name.lastIndexOf('.');
+    const ext = dot >= 0 ? file.name.slice(dot).toLowerCase() : '';
+    setConverting(Boolean(conversion?.extensions.includes(ext)));
+    try {
+      await runImport((options) => api.uploadFile(file, options));
+    } finally {
+      setConverting(false);
+    }
   };
 
   const importEfp = async () => {
@@ -285,12 +310,20 @@ export default function ImportDialog({ onClose }: Props) {
           )}
         >
           <IconUpload className="h-6 w-6 text-ink-400" />
-          <p className="text-sm text-ink-200">Trascina qui un file EPUB / PDF / DOCX / TXT</p>
-          <p className="text-[11px] text-ink-500">oppure clicca per sceglierlo</p>
+          <p className="text-sm text-ink-200">
+            Trascina qui un file {formatList}
+          </p>
+          <p className="text-[11px] text-ink-500">
+            {converting
+              ? 'Conversione in corso… può richiedere qualche minuto'
+              : conversionLabels.length > 0
+                ? 'oppure clicca per sceglierlo · i formati Kindle e DJVU vengono convertiti'
+                : 'oppure clicca per sceglierlo'}
+          </p>
           <input
             id="import-file"
             type="file"
-            accept=".epub,.pdf,.docx,.txt,.md,.rtf"
+            accept={['.epub', '.pdf', '.docx', '.txt', '.md', '.rtf', ...(conversion?.extensions ?? [])].join(',')}
             hidden
             onChange={(event) => {
               const file = event.target.files?.[0];
