@@ -33,7 +33,8 @@
     "appId": "io.github.books-editor",
     "productName": "Books Editor",
     "directories": {
-      "output": "release"
+      "output": "release",
+      "buildResources": "build"
     },
     "files": [
       "dist/**/*",
@@ -50,7 +51,8 @@
         }
       ],
       "identity": "-",
-      "hardenedRuntime": false
+      "hardenedRuntime": false,
+      "icon": "build/icon.icns"
     },
     "dmg": {
       "title": "Books Editor"

@@ -89,8 +89,9 @@ function errorMessage(status: number, body: { error?: string }): string {
 
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const headers: Record<string, string> = {
-    ...(init.headers as Record<string, string>),
     'X-Library': activeLibraryId,
+    // Un header esplicito (es. sincronizzazione di un'altra libreria) vince su quello della libreria aperta.
+    ...(init.headers as Record<string, string>),
   };
   const isFormData = init.body instanceof FormData;
   // Fastify rifiuta un body vuoto con content-type json: lo impostiamo solo
@@ -328,12 +329,16 @@ export const api = {
   appleBooksCapabilities: () => request<{ local: boolean }>('/apple-books/capabilities'),
   importAppleBooksData: (
     data: Pick<AppleBooksRawData, 'annotations' | 'library'>,
-    options: { dryRun?: boolean; bookIds?: string[] } = {},
-  ) =>
-    request<AppleBooksImportResult>('/apple-books/import-data', {
+    options: { dryRun?: boolean; bookIds?: string[]; libraryId?: string } = {},
+  ) => {
+    // `libraryId` sceglie la libreria senza cambiare quella aperta: va nell'header, non nel corpo.
+    const { libraryId, ...body } = options;
+    return request<AppleBooksImportResult>('/apple-books/import-data', {
       method: 'POST',
-      body: JSON.stringify({ annotations: data.annotations, library: data.library, ...options }),
-    }),
+      headers: libraryId ? { 'X-Library': libraryId } : undefined,
+      body: JSON.stringify({ annotations: data.annotations, library: data.library, ...body }),
+    });
+  },
 
   scan: () => request<ScanResult>('/library/scan', { method: 'POST' }),
   importPath: (path: string, options: { force?: boolean; attachTo?: string } = {}) =>

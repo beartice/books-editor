@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <!-- Icona dell'app Mac: lo stesso simbolo di web/public/favicon.svg sulla
+       griglia di macOS (quadrato da 824 px centrato su 1024, margine trasparente). -->
+  <defs>
+    <filter id="ombra" x="-10%" y="-10%" width="120%" height="125%">
+      <feDropShadow dx="0" dy="12" stdDeviation="14" flood-color="#000" flood-opacity="0.22"/>
+    </filter>
+  </defs>
+  <rect x="100" y="100" width="824" height="824" rx="185" fill="#f2643a" filter="url(#ombra)"/>
+  <g transform="translate(100 100) scale(12.875)" fill="none" stroke="#ffffff" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M17 47.5A5.5 5.5 0 0 1 22.5 42H47"/>
+    <path d="M22.5 14H47v34H22.5A5.5 5.5 0 0 1 17 42.5v-23A5.5 5.5 0 0 1 22.5 14z"/>
+  </g>
+</svg>

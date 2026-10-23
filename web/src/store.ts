@@ -157,6 +157,25 @@ export function matchesQuickFilter(filters: Filters, quick: QuickFilter): boolea
   }
 }
 
+const APPLE_AUTO_SYNC_KEY = 'books-editor.appleAutoSync';
+
+/** Sincronizzazione automatica con Apple Books: attiva se non e' stata spenta. */
+export function readAppleAutoSync(): boolean {
+  try {
+    return localStorage.getItem(APPLE_AUTO_SYNC_KEY) !== '0';
+  } catch {
+    return true;
+  }
+}
+
+export function storeAppleAutoSync(enabled: boolean): void {
+  try {
+    localStorage.setItem(APPLE_AUTO_SYNC_KEY, enabled ? '1' : '0');
+  } catch {
+    /* localStorage non disponibile: vale solo per questa sessione */
+  }
+}
+
 interface State {
   books: BookSummary[];
   stats: LibraryStats | null;
@@ -192,11 +211,15 @@ interface State {
   setupLibraryRootLocked: boolean;
   credentialsSource: 'env' | 'file' | null;
   authUser: string | null;
+  /** Sincronizzazione automatica con Apple Books (solo app per Mac). */
+  appleSync: { enabled: boolean; lastAt: number | null; updated: number };
 
   checkAuth: () => Promise<void>;
   loggedIn: () => Promise<void>;
   logout: () => Promise<void>;
   load: () => Promise<void>;
+  /** Ricarica elenco e statistiche senza spinner e senza toccare selezione, filtri o pagina. */
+  refreshBooks: () => Promise<void>;
   loadLibraries: () => Promise<void>;
   setLibrary: (id: string, options?: { select?: string }) => Promise<void>;
   moveBook: (toId: string) => Promise<void>;
@@ -356,6 +379,7 @@ export const useStore = create<State>((set, get) => ({
   setupLibraryRootLocked: false,
   credentialsSource: null,
   authUser: null,
+  appleSync: { enabled: readAppleAutoSync(), lastAt: null, updated: 0 },
 
   checkAuth: async () => {
     try {
@@ -418,6 +442,18 @@ export const useStore = create<State>((set, get) => ({
       if (!(error instanceof ApiError && error.status === 401) && !missing) {
         get().toast((error as Error).message, 'error');
       }
+    }
+  },
+
+  refreshBooks: async () => {
+    const libraryId = get().libraryId;
+    try {
+      const { books, stats } = await api.books();
+      // Cambio libreria nel frattempo: la risposta non e' piu' valida.
+      if (get().libraryId !== libraryId) return;
+      set({ books, stats });
+    } catch (error) {
+      console.warn('[store] ricarica silenziosa non riuscita:', (error as Error).message);
     }
   },
 

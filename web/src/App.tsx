@@ -23,6 +23,7 @@ import {
   IconLayers,
   IconPlus,
 } from './components/icons';
+import { startAppleBooksAutoSync, stopAppleBooksAutoSync } from './desktop';
 import { cn } from './utils';
 import type { BookSummary } from '@shared/types';
 
@@ -67,6 +68,14 @@ export default function App() {
     if (params.get('view') === 'list') setView('list');
     if (params.get('view') === 'grid') setView('grid');
   }, [checkAuth, select, setView]);
+
+  // App per Mac: sincronizzazione automatica con Apple Books dopo il login (si ferma all'uscita).
+  const signedIn = authChecked && !authRequired && !setupRequired;
+  useEffect(() => {
+    if (!signedIn) return;
+    startAppleBooksAutoSync();
+    return stopAppleBooksAutoSync;
+  }, [signedIn]);
 
   const visible = useMemo(
     () => selectVisible({ books, query, filters, sort }),

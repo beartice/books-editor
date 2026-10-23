@@ -3,7 +3,7 @@ import type { FormEvent } from 'react';
 import { useStore } from '../store';
 import { ApiError, api } from '../api';
 import type { AppleBooksImportResult } from '@shared/types';
-import { desktop, importAppleBooksViaApp } from '../desktop';
+import { desktop, importAppleBooksViaApp, setAppleAutoSync } from '../desktop';
 import { IconClose, IconFolder, IconLogout } from './icons';
 
 interface Props {
@@ -11,7 +11,7 @@ interface Props {
 }
 
 export default function SettingsDialog({ onClose }: Props) {
-  const { settings, setSettings, libraryId } = useStore();
+  const { settings, setSettings, libraryId, appleSync } = useStore();
   const [libraryRoot, setLibraryRoot] = useState(settings?.libraryRoot ?? '');
   const [libraryName, setLibraryName] = useState(settings?.libraryName ?? '');
   const [searchLanguage, setSearchLanguage] = useState(settings?.searchLanguage ?? 'it');
@@ -121,8 +121,10 @@ export default function SettingsDialog({ onClose }: Props) {
       // Server in locale sul Mac: legge lui. Altrimenti lo fa l'app per Mac e invia i dati.
       const result = appleLocal ? await api.importAppleBooks() : await importAppleBooksViaApp();
       setAppleResult(result);
+      // La lista si ricarica sempre (card con avanzamento); il dettaglio solo se un libro e' aperto.
       const selected = useStore.getState().selectedId;
       if (selected) await useStore.getState().reloadBook(selected);
+      else await useStore.getState().refreshBooks();
       useStore
         .getState()
         .toast(
@@ -400,12 +402,33 @@ export default function SettingsDialog({ onClose }: Props) {
               disabled={appleBusy || appleLocal === null || (!appleLocal && !desktop())}
               className="btn-ghost mt-2 text-[12px] disabled:opacity-60"
             >
-              {appleBusy ? 'Lettura in corso…' : 'Importa da Apple Books'}
+              {appleBusy ? 'Lettura in corso…' : desktop() ? 'Sincronizza ora' : 'Importa da Apple Books'}
             </button>
             {appleLocal === false && !desktop() && (
               <p className="mt-2 text-[11px] leading-relaxed text-ink-500">
                 Disponibile nell’app per Mac (vedi il README del progetto).
               </p>
+            )}
+            {desktop() && !appleLocal && (
+              <div className="mt-3 border-t border-black/[0.06] pt-2">
+                <label className="flex items-center gap-2 text-[12px] text-ink-300">
+                  <input
+                    type="checkbox"
+                    checked={appleSync.enabled}
+                    onChange={(event) => setAppleAutoSync(event.target.checked)}
+                  />
+                  Sincronizza automaticamente con Apple Books
+                </label>
+                <p className="mt-1 text-[11px] text-ink-500">
+                  {appleSync.enabled ? 'Sincronizzazione automatica attiva' : 'Sincronizzazione automatica spenta'} ·{' '}
+                  {appleSync.lastAt
+                    ? `ultima: ${new Date(appleSync.lastAt).toLocaleTimeString('it-IT', {
+                        hour: '2-digit',
+                        minute: '2-digit',
+                      })}`
+                    : 'non ancora eseguita'}
+                </p>
+              </div>
             )}
             {appleError && (
               <p className="mt-2 text-[11px] leading-relaxed text-rose-600">{appleError}</p>
