@@ -8,7 +8,7 @@ import {
   setSetupRequiredHandler,
   setUnauthorizedHandler,
 } from './api';
-import { cn, lengthOf, READING_STATUS_LABEL } from './utils';
+import { cn, lengthOf, READING_STATUS_LABEL, releaseDateKey } from './utils';
 import type {
   BookHighlight,
   AppSettings,
@@ -320,7 +320,12 @@ export function selectVisible(state: {
     let result = 0;
     switch (key) {
       case 'author':
+        // Autore, poi saga con il numero del volume (i libri senza saga dopo), poi data
+        // di uscita (le date mancanti in fondo); a parita' resta il titolo.
         result = collator.compare(a.authors[0] ?? '', b.authors[0] ?? '');
+        if (result === 0) result = collator.compare(a.series || '\uffff', b.series || '\uffff');
+        if (result === 0) result = (a.seriesIndex ?? Infinity) - (b.seriesIndex ?? Infinity) || 0;
+        if (result === 0) result = releaseDateKey(a.publishedDate).localeCompare(releaseDateKey(b.publishedDate));
         break;
       case 'series':
         result = collator.compare(a.series || '￿', b.series || '￿');
@@ -333,7 +338,7 @@ export function selectVisible(state: {
         result = (a.rating ?? -1) - (b.rating ?? -1);
         break;
       case 'publishedDate':
-        result = (a.publishedDate || '').localeCompare(b.publishedDate || '');
+        result = releaseDateKey(a.publishedDate).localeCompare(releaseDateKey(b.publishedDate));
         break;
       case 'dateAdded':
         result = a.dateAdded.localeCompare(b.dateAdded);
@@ -373,7 +378,7 @@ export const useStore = create<State>((set, get) => ({
   loading: true,
   busy: false,
   query: '',
-  sort: { key: 'title', asc: true },
+  sort: { key: 'author', asc: true },
   view: 'grid',
   filters: { ...EMPTY_FILTERS },
   selectedId: null,

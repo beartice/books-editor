@@ -128,3 +128,27 @@ export function languageLabel(code: string | null | undefined): string {
   }
   return value.toUpperCase();
 }
+
+/**
+ * Chiave confrontabile (AAAA-MM-GG) per una data di uscita scritta in formati diversi:
+ * «2016-07-25», «2015-09», «2022», «Nov 03, 2014», «March 24 2026». Le date
+ * mancanti o illeggibili vanno in fondo.
+ */
+export function releaseDateKey(value: string | null | undefined): string {
+  const text = (value ?? '').trim();
+  if (!text) return '￿';
+  const iso = /^(\d{4})(?:-(\d{1,2}))?(?:-(\d{1,2}))?/.exec(text);
+  if (iso) {
+    const [, year, month = '00', day = '00'] = iso;
+    return `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`;
+  }
+  const parsed = Date.parse(text);
+  if (!Number.isNaN(parsed)) {
+    // Date.parse legge «Nov 03, 2014» nell'ora locale: niente toISOString (UTC), che sposterebbe il giorno.
+    const date = new Date(parsed);
+    const pad = (n: number) => String(n).padStart(2, '0');
+    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+  }
+  const year = /\b(\d{4})\b/.exec(text);
+  return year ? `${year[1]}-00-00` : '￿';
+}
