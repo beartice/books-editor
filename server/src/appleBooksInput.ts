@@ -91,6 +91,7 @@ export function parseAppleBooksInput(body: unknown): {
     }
     checkField(row, 'finishedAt', MAX_SHORT, where, true);
     checkField(row, 'readingProgress', MAX_SHORT, where, true);
+    checkField(row, 'lastOpenedAt', MAX_SHORT, where, true);
   });
 
   return {

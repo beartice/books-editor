@@ -271,6 +271,9 @@ export const api = {
     const qs = query.toString();
     return requestBlob(`/books/${id}/download${qs ? `?${qs}` : ''}`, {}, file ?? 'libro');
   },
+  /** Salva la posizione di lettura del lettore integrato (il server aggiorna anche l'avanzamento). */
+  saveReadingPosition: (id: string, body: { file: string; location: string; progress: number }) =>
+    request<{ ok: true }>(`/books/${id}/reading-position`, { method: 'POST', body: JSON.stringify(body) }),
   writeEpub: (id: string) =>
     request<{ fields: string[]; cover: boolean; backup: string }>(`/books/${id}/write-epub`, {
       method: 'POST',

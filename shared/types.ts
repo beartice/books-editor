@@ -25,6 +25,14 @@ export interface BookEdition {
   title: string;
 }
 
+/** Posizione di lettura salvata dal lettore integrato. */
+export interface ReadingPosition {
+  location: string;
+  /** Percentuale 0-100. */
+  progress: number;
+  updatedAt: string;
+}
+
 export interface BookMeta {
   id: string;
   kind: BookKind;
@@ -94,6 +102,13 @@ export interface BookMeta {
   readingStatus: ReadingStatus;
   /** Percentuale di lettura da 0 a 100 (null = non disponibile). */
   readingProgress: number | null;
+  /** Momento dell'ultimo aggiornamento di `readingProgress`, da qualunque fonte (lettore, Apple Books, modifica a mano). */
+  readingProgressUpdatedAt?: string | null;
+  /**
+   * Posizione di lettura nel lettore integrato, per file letto (nome del file, principale o edizione).
+   * `location` e' il CFI per l'EPUB o il numero di pagina per il PDF.
+   */
+  readingPositions?: Record<string, ReadingPosition>;
   /** Data in cui il libro e' stato finito (AAAA-MM-GG), null se non finito. */
   dateFinished: string | null;
 
@@ -206,6 +221,8 @@ export interface AppleLibraryRow {
   finishedAt?: number | string | null;
   /** Avanzamento di lettura da 0 a 1. */
   readingProgress?: number | string | null;
+  /** Ultima apertura del libro in Apple Books (timestamp Core Data). */
+  lastOpenedAt?: number | string | null;
 }
 
 /** Dati letti da Apple Books sul Mac, prima dell'abbinamento con la libreria. */

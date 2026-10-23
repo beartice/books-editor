@@ -128,19 +128,24 @@ export async function readAnnotations(database: string): Promise<AppleAnnotation
 
 export async function readLibrary(database: string | null): Promise<AppleLibraryRow[]> {
   if (!database) return [];
-  const rows = await sqliteJson<AppleLibraryRow>(
-    database,
-    `SELECT
+  const query = (withLastOpened: boolean) => `SELECT
        ZASSETID AS assetId,
        ZTITLE AS title,
        ZSORTTITLE AS sortTitle,
        ZAUTHOR AS author,
        ZSORTAUTHOR AS sortAuthor,
        ZDATEFINISHED AS finishedAt,
-       ZREADINGPROGRESS AS readingProgress
+       ZREADINGPROGRESS AS readingProgress${withLastOpened ? ',\n       ZLASTOPENDATE AS lastOpenedAt' : ''}
      FROM ZBKLIBRARYASSET
-     WHERE ZASSETID IS NOT NULL`,
-  );
+     WHERE ZASSETID IS NOT NULL`;
+  let rows: AppleLibraryRow[];
+  try {
+    rows = await sqliteJson<AppleLibraryRow>(database, query(true));
+  } catch (error) {
+    // Una versione di Libri senza la colonna dell'ultima apertura: si legge senza.
+    if (!/ZLASTOPENDATE|no such column/i.test((error as Error).message)) throw error;
+    rows = await sqliteJson<AppleLibraryRow>(database, query(false));
+  }
   return rows.filter((row) => String(row.assetId ?? '').trim());
 }
 

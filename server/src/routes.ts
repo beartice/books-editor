@@ -451,6 +451,13 @@ export async function registerApi(app: FastifyInstance): Promise<void> {
     async (request, reply) => {
       try {
         const allowed = pickAllowed(request.body);
+        // Un avanzamento cambiato a mano conta come aggiornamento piu' recente di quello di Apple Books.
+        if ('readingProgress' in allowed) {
+          const current = await getBookMeta(request.params.id);
+          if (current && (current.readingProgress ?? null) !== (allowed.readingProgress ?? null)) {
+            allowed.readingProgressUpdatedAt = new Date().toISOString();
+          }
+        }
         const updated = await updateBook(request.params.id, allowed, 'manual');
         return updated;
       } catch (error) {
@@ -667,6 +674,48 @@ export async function registerApi(app: FastifyInstance): Promise<void> {
         .header('Content-Disposition', attachmentHeader(downloadName(book, file), disposition))
         .header('Cache-Control', 'no-store')
         .send(fs.createReadStream(filePath));
+    },
+  );
+
+  /**
+   * Salva la posizione di lettura del lettore integrato. E' un POST (e non un PUT)
+   * perche' la chiusura della pagina la invia con `navigator.sendBeacon`.
+   * Non fa partire ricerche online: aggiorna solo i campi della lettura.
+   */
+  app.post<{ Params: { id: string }; Body: { file?: unknown; location?: unknown; progress?: unknown } }>(
+    '/api/books/:id/reading-position',
+    async (request, reply) => {
+      const book = await getBookMeta(request.params.id);
+      if (!book) return reply.code(404).send({ error: 'Libro non trovato' });
+      const { file, location, progress } = request.body ?? {};
+      const readable = [book.sourceFile, ...(book.editions ?? []).map((edition) => edition.file)].filter(
+        (name): name is string => Boolean(name),
+      );
+      if (typeof file !== 'string' || !readable.includes(file) || !/\.(epub|pdf)$/i.test(file)) {
+        return reply.code(400).send({ error: 'File non leggibile nel lettore' });
+      }
+      if (typeof location !== 'string' || !location || location.length > 1000) {
+        return reply.code(400).send({ error: 'Posizione non valida' });
+      }
+      if (typeof progress !== 'number' || !Number.isFinite(progress) || progress < 0 || progress > 100) {
+        return reply.code(400).send({ error: 'Avanzamento non valido (0-100)' });
+      }
+      const now = new Date().toISOString();
+      const patch: Partial<BookMeta> = {
+        readingPositions: { ...book.readingPositions, [file]: { location, progress, updatedAt: now } },
+        readingProgress: Math.round(progress),
+        readingProgressUpdatedAt: now,
+      };
+      // Il lettore avvia la lettura ma non la chiude mai da solo; uno stato scelto a mano resta com'e'.
+      if (book.readingStatus === 'unread' && book.fieldSource?.readingStatus !== 'manual') {
+        patch.readingStatus = 'reading';
+      }
+      try {
+        await updateBook(book.id, patch, 'file', { touch: false });
+      } catch (error) {
+        return reply.code(404).send({ error: (error as Error).message });
+      }
+      return { ok: true };
     },
   );
 

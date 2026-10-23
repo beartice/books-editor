@@ -1,7 +1,7 @@
 {
   "name": "books-editor-desktop",
   "productName": "Books Editor",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "private": true,
   "description": "App per Mac di Books Editor: apre il server e aggiunge le funzioni di Apple Books.",
   "author": "Books Editor",

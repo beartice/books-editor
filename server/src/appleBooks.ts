@@ -29,6 +29,8 @@ interface AppleBook {
   finishedAt: string;
   /** Percentuale di lettura (0-100), null se assente. */
   readingProgress: number | null;
+  /** Ultima apertura in Apple Books (ISO), vuota se Apple non la fornisce. */
+  lastOpenedAt: string;
 }
 
 interface MatchPair {
@@ -302,6 +304,7 @@ function buildAppleBooks(
       count: highlighted.length,
       finishedAt,
       readingProgress,
+      lastOpenedAt: appleDate(row?.lastOpenedAt),
     });
   }
   return books.sort(
@@ -408,13 +411,21 @@ export async function importAppleBooksFromRows(
     const next = [...manual, ...highlights].sort(compareLocations);
     const identifiers = { ...book.identifiers, applebooks: apple.assetId };
     const finishedAt = apple.finishedAt && titleRank > 0 ? apple.finishedAt : '';
-    const readingProgress = titleRank > 0 ? apple.readingProgress : null;
+    let readingProgress = titleRank > 0 ? apple.readingProgress : null;
+    // Vince l'aggiornamento piu' recente: se l'avanzamento e' stato scritto dal
+    // lettore dopo l'ultima apertura in Apple Books, quello di Apple non lo sovrascrive.
+    // Senza `lastOpenedAt` (vecchie app Mac) si comporta come prima.
+    const readerAt = Date.parse(book.readingProgressUpdatedAt ?? '');
+    const appleAt = Date.parse(apple.lastOpenedAt);
+    const readerWins = !Number.isNaN(readerAt) && !Number.isNaN(appleAt) && readerAt > appleAt;
+    if (readerWins) readingProgress = null;
     const patch: Partial<BookMeta> = { highlights: next, identifiers };
     if (finishedAt) {
       patch.dateFinished = finishedAt;
       // La data di fine basta: Apple non compila piu' il flag "finito" per i
       // libri vecchi. Lo stato scelto a mano resta com'e'.
       if (
+        !readerWins &&
         (book.readingStatus === 'unread' || book.readingStatus === 'reading') &&
         book.fieldSource?.readingStatus !== 'manual'
       ) {
@@ -424,6 +435,10 @@ export async function importAppleBooksFromRows(
     }
     if (readingProgress !== null) {
       patch.readingProgress = readingProgress;
+      // Il momento dell'aggiornamento e' l'ultima apertura di Apple (o adesso, se manca).
+      if ((book.readingProgress ?? null) !== readingProgress) {
+        patch.readingProgressUpdatedAt = apple.lastOpenedAt || new Date().toISOString();
+      }
       progressBooks += 1;
       // Un libro iniziato ma non finito diventa "In lettura", senza toccare
       // gli stati scelti a mano.
@@ -442,6 +457,8 @@ export async function importAppleBooksFromRows(
       (patch.dateFinished !== undefined &&
         (book.dateFinished ?? null) !== patch.dateFinished) ||
       (readingProgress !== null && (book.readingProgress ?? null) !== readingProgress) ||
+      (patch.readingProgressUpdatedAt !== undefined &&
+        (book.readingProgressUpdatedAt ?? null) !== patch.readingProgressUpdatedAt) ||
       (patch.readingStatus !== undefined && book.readingStatus !== patch.readingStatus);
 
     if (changed && !options.dryRun) {

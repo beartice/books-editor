@@ -257,7 +257,7 @@ export default function DetailPanel({
 }: {
   onOpenSeries?: (series: string) => void;
 }) {
-  const { detail, select, patchDetail, detailTab, setDetailTab, busy } = useStore();
+  const { detail, select, patchDetail, detailTab, setDetailTab, busy, openReader } = useStore();
   const { lookupAttempted, runLookup } = useStore();
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [downloading, setDownloading] = useState<string | null>(null);
@@ -267,6 +267,9 @@ export default function DetailPanel({
   const [appleStatus, setAppleStatus] = useState<AppleBooksWriteStatus | null>(null);
   const [appleDialog, setAppleDialog] = useState(false);
   const downloadMenuRef = useRef<HTMLDivElement>(null);
+  // «Leggi»: menu delle lingue del lettore integrato.
+  const [readMenu, setReadMenu] = useState(false);
+  const readMenuRef = useRef<HTMLDivElement>(null);
   // «Apri in Libri»: menu delle lingue, file in preparazione, file pronti e file da condividere al prossimo tocco.
   const [shareMenu, setShareMenu] = useState(false);
   const [sharing, setSharing] = useState<string | null>(null);
@@ -284,7 +287,8 @@ export default function DetailPanel({
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === 'Escape' && document.activeElement?.tagName !== 'INPUT') {
+      // Con il lettore aperto Esc spetta a lui.
+      if (event.key === 'Escape' && document.activeElement?.tagName !== 'INPUT' && !useStore.getState().reader) {
         select(null);
       }
     };
@@ -317,18 +321,26 @@ export default function DetailPanel({
 
   // Menu delle lingue: si chiude con un clic fuori o con Esc (che non chiude il pannello).
   useEffect(() => {
-    if (!downloadMenu && !shareMenu) return;
+    if (!downloadMenu && !shareMenu && !readMenu) return;
     const onDown = (event: MouseEvent) => {
       const target = event.target as Node;
-      if (downloadMenuRef.current?.contains(target) || shareMenuRef.current?.contains(target)) return;
+      if (
+        downloadMenuRef.current?.contains(target) ||
+        shareMenuRef.current?.contains(target) ||
+        readMenuRef.current?.contains(target)
+      ) {
+        return;
+      }
       setDownloadMenu(false);
       setShareMenu(false);
+      setReadMenu(false);
     };
     const onKey = (event: KeyboardEvent) => {
       if (event.key !== 'Escape') return;
       event.stopPropagation();
       setDownloadMenu(false);
       setShareMenu(false);
+      setReadMenu(false);
     };
     document.addEventListener('mousedown', onDown);
     document.addEventListener('keydown', onKey, true);
@@ -336,7 +348,7 @@ export default function DetailPanel({
       document.removeEventListener('mousedown', onDown);
       document.removeEventListener('keydown', onKey, true);
     };
-  }, [downloadMenu, shareMenu]);
+  }, [downloadMenu, shareMenu, readMenu]);
 
   if (!detail) return null;
 
@@ -392,6 +404,14 @@ export default function DetailPanel({
   const languageChips = [
     ...new Set([meta.language, ...editions.map((edition) => edition.language)].filter(Boolean)),
   ].map(languageLabel);
+
+  // Lettore integrato: solo EPUB e PDF (l'originale MOBI e gli altri extra non si leggono).
+  const readableRows = (hasEditions
+    ? languageRows
+    : meta.sourceFile
+      ? [{ file: meta.sourceFile, language: meta.language, title: meta.title }]
+      : []
+  ).filter((row) => /\.(epub|pdf)$/i.test(row.file));
 
   const handleDownload = async (file: string) => {
     setDownloading(file);
@@ -595,6 +615,38 @@ export default function DetailPanel({
             </p>
             {files.length > 0 && (
               <div className="mt-2.5 flex flex-wrap gap-1.5">
+                {readableRows.length > 0 && (
+                  <div ref={readMenuRef} className="relative">
+                    <button
+                      onClick={() => {
+                        if (readableRows.length > 1) setReadMenu((open) => !open);
+                        else openReader(meta.id, readableRows[0].file);
+                      }}
+                      className="btn-primary px-2.5 py-2 text-[12px] sm:py-1"
+                      title="Leggi qui, nel lettore integrato"
+                    >
+                      <IconBook className="h-3.5 w-3.5" />
+                      Leggi{readableRows.length > 1 ? ' ▾' : ''}
+                    </button>
+                    {readMenu && readableRows.length > 1 && (
+                      <div className="absolute left-0 top-full z-10 mt-1 min-w-[16rem] max-w-[22rem] rounded-lg border border-black/[0.08] bg-white p-1 shadow-panel">
+                        {readableRows.map((row) => (
+                          <button
+                            key={row.file}
+                            onClick={() => {
+                              setReadMenu(false);
+                              openReader(meta.id, row.file);
+                            }}
+                            className="block w-full truncate rounded-md px-2.5 py-1.5 text-left text-[12px] text-ink-200 hover:bg-black/[0.05]"
+                            title={row.file}
+                          >
+                            {languageLabel(row.language)} · {row.title || row.file}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
                 {visibleFiles.map((file, index) =>
                   hasEditions && file === meta.sourceFile ? (
                     <div key={file} ref={downloadMenuRef} className="relative">

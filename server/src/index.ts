@@ -41,13 +41,16 @@ if (CORS_ORIGINS.length > 0) {
 }
 await app.register(multipart, { limits: { fileSize: MAX_UPLOAD_BYTES } });
 
-/* Intestazioni di sicurezza. HSTS lo imposta nginx. */
+/* Intestazioni di sicurezza. HSTS lo imposta nginx.
+   Il lettore integrato ha bisogno di blob: per gli stili e i font dei libri (epub.js li
+   estrae in blob; le immagini ammettono gia' blob:). Il worker di pdf.js e gli iframe
+   srcdoc di epub.js rientrano in 'self'. Gli script restano 'self'. */
 const CSP = [
   "default-src 'self'",
   "script-src 'self'",
-  "style-src 'self' 'unsafe-inline'",
+  "style-src 'self' 'unsafe-inline' blob:",
   "img-src 'self' data: blob: https:",
-  "font-src 'self' data:",
+  "font-src 'self' data: blob:",
   "connect-src 'self'",
   "object-src 'none'",
   "base-uri 'self'",

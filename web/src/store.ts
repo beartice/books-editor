@@ -95,6 +95,19 @@ function writeLibraryToUrl(id: string, dropBook: boolean): void {
   window.history.replaceState({}, '', url);
 }
 
+/** Libro e file aperti nel lettore integrato (URL `?read=<id>&file=<nome>`). */
+export interface ReaderTarget {
+  id: string;
+  file: string;
+}
+
+function readerFromUrl(): ReaderTarget | null {
+  const params = new URLSearchParams(window.location.search);
+  const id = params.get('read')?.trim();
+  const file = params.get('file')?.trim();
+  return id && file ? { id, file } : null;
+}
+
 export type QuickFilter = 'all' | 'books' | 'fanfic' | 'favorites' | 'unread';
 
 export function matchesQuickFilter(filters: Filters, quick: QuickFilter): boolean {
@@ -192,6 +205,8 @@ interface State {
   selectedId: string | null;
   detail: BookMeta | null;
   detailTab: 'details' | 'highlights' | 'cover' | 'online';
+  /** Lettore integrato aperto (null = chiuso). */
+  reader: ReaderTarget | null;
   lookup: LookupResult | null;
   lookupLoading: boolean;
   /** true dopo il primo tentativo di ricerca: evita cicli automatici. */
@@ -232,6 +247,10 @@ interface State {
   clearFilters: () => void;
   select: (id: string | null) => Promise<void>;
   setDetailTab: (tab: 'details' | 'highlights' | 'cover' | 'online') => void;
+  openReader: (id: string, file: string) => void;
+  closeReader: () => void;
+  /** Aggiorna in silenzio avanzamento e stato della card dopo un salvataggio del lettore. */
+  applyReadingProgress: (id: string, progress: number) => void;
   setSettingsOpen: (open: boolean) => void;
   patchDetail: (patch: Partial<BookMeta>) => Promise<void>;
   runLookup: () => Promise<void>;
@@ -363,6 +382,7 @@ export const useStore = create<State>((set, get) => ({
   filters: { ...EMPTY_FILTERS },
   selectedId: null,
   detail: null,
+  reader: readerFromUrl(),
   detailTab: 'details',
   lookup: null,
   lookupLoading: false,
@@ -585,6 +605,46 @@ export const useStore = create<State>((set, get) => ({
   },
 
   setSettingsOpen: (settingsOpen) => set({ settingsOpen }),
+
+  // Il lettore ha una voce di cronologia propria: «Indietro», Esc e lo swipe di iOS lo chiudono.
+  openReader: (id, file) => {
+    const url = new URL(window.location.href);
+    url.searchParams.set('read', id);
+    url.searchParams.set('file', file);
+    window.history.pushState({ reader: true }, '', url);
+    set({ reader: { id, file } });
+  },
+
+  closeReader: () => {
+    if (!get().reader) return;
+    if (window.history.state?.reader) {
+      // Lo stato lo azzera l'evento popstate.
+      window.history.back();
+      return;
+    }
+    const url = new URL(window.location.href);
+    url.searchParams.delete('read');
+    url.searchParams.delete('file');
+    window.history.replaceState({}, '', url);
+    set({ reader: null });
+  },
+
+  applyReadingProgress: (id, progress) => {
+    const percent = Math.round(progress);
+    const patchStatus = <T extends { readingStatus: ReadingStatus }>(item: T) =>
+      item.readingStatus === 'unread' ? 'reading' : item.readingStatus;
+    set((state) => ({
+      books: state.books.map((book) =>
+        book.id === id
+          ? { ...book, readingProgress: percent, readingStatus: patchStatus(book) }
+          : book,
+      ),
+      detail:
+        state.detail?.id === id
+          ? { ...state.detail, readingProgress: percent, readingStatus: patchStatus(state.detail) }
+          : state.detail,
+    }));
+  },
 
   patchDetail: async (patch) => {
     const { detail } = get();
@@ -871,4 +931,12 @@ setSetupRequiredHandler(() => {
 setUnauthorizedHandler(() => {
   if (useStore.getState().authRequired) return;
   useStore.setState({ authEnabled: true, authRequired: true, authMessage: 'Sessione scaduta, accedi di nuovo' });
+});
+
+// «Indietro» del browser (o lo swipe di iOS) apre o chiude il lettore secondo l'URL.
+window.addEventListener('popstate', () => {
+  const next = readerFromUrl();
+  const current = useStore.getState().reader;
+  if (next?.id === current?.id && next?.file === current?.file) return;
+  useStore.setState({ reader: next });
 });

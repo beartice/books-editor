@@ -877,6 +877,7 @@ export async function updateBook(
   id: string,
   patch: Partial<BookMeta>,
   source: 'manual' | 'online' | 'file' = 'manual',
+  options: { touch?: boolean } = {},
 ): Promise<BookMeta> {
   const index = await loadIndex();
   const position = index.findIndex((book) => book.id === id);
@@ -895,7 +896,8 @@ export async function updateBook(
   const next: BookMeta = { ...current, ...patch };
   next.id = current.id;
   next.dateAdded = current.dateAdded;
-  next.dateModified = new Date().toISOString();
+  // Con `touch: false` (posizione di lettura) la data di modifica non cambia.
+  next.dateModified = options.touch === false ? current.dateModified : new Date().toISOString();
 
   const fieldSource = { ...current.fieldSource };
   for (const key of Object.keys(patch)) {

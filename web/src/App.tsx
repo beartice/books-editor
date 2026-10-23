@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { Suspense, lazy, useEffect, useMemo, useState } from 'react';
 import { libraryNameOf, matchesQuickFilter, selectVisible, useStore } from './store';
 import type { QuickFilter } from './store';
 import TopBar from './components/TopBar';
@@ -27,6 +27,9 @@ import { startAppleBooksAutoSync, stopAppleBooksAutoSync } from './desktop';
 import { cn } from './utils';
 import type { BookSummary } from '@shared/types';
 
+// Il lettore (epub.js, pdf.js) pesa parecchio: si scarica solo alla prima apertura.
+const Reader = lazy(() => import('./components/Reader'));
+
 // Opere per pagina: divisibile per 2, 3, 4, 5 e 6 (colonne della griglia).
 const PAGE_SIZE = 60;
 
@@ -43,6 +46,7 @@ export default function App() {
     query,
     clearFilters,
     selectedId,
+    reader,
     scan,
     busy,
     sort,
@@ -241,6 +245,17 @@ export default function App() {
         />
       )}
       {statsOpen && <StatsDialog onClose={() => setStatsOpen(false)} />}
+      {reader && (
+        <Suspense
+          fallback={
+            <div className="fixed inset-0 z-[70] flex items-center justify-center bg-white text-sm text-ink-400">
+              Carico il lettore…
+            </div>
+          }
+        >
+          <Reader key={`${reader.id}|${reader.file}`} id={reader.id} file={reader.file} />
+        </Suspense>
+      )}
       <Toasts />
     </div>
   );
