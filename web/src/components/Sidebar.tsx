@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import { describeFilter, libraryNameOf, matchesQuickFilter, useStore } from '../store';
 import type { Filters, QuickFilter } from '../store';
 import { cn, formatNumber } from '../utils';
-import { READING_STATUSES } from '@shared/types';
+import { READING_STATUSES, isFanficUpdateAvailable } from '@shared/types';
 import {
   IconBook,
   IconBookmark,
@@ -14,6 +14,7 @@ import {
   IconHeart,
   IconHome,
   IconLayers,
+  IconRefresh,
   IconSettings,
   IconSparkle,
   IconStar,
@@ -145,16 +146,26 @@ export default function Sidebar({
     }, 60);
   };
 
+  // Fanfiction con nuovi capitoli sul sito: la voce compare solo se ce n'e' almeno una.
+  const updatesCount = useMemo(
+    () => books.filter((book) => isFanficUpdateAvailable(book.fanficUpdate)).length,
+    [books],
+  );
+
   const navItems: Array<{
     quick: QuickFilter;
     label: string;
     icon: typeof IconBook;
+    count?: number;
   }> = [
     { quick: 'all', label: 'Scopri', icon: IconHome },
     { quick: 'books', label: 'Libri', icon: IconBook },
     { quick: 'fanfic', label: 'Fanfiction', icon: IconSparkle },
     { quick: 'favorites', label: 'Preferiti', icon: IconHeart },
     { quick: 'unread', label: 'Da leggere', icon: IconBookmark },
+    ...(updatesCount > 0
+      ? [{ quick: 'updates' as const, label: 'Aggiornamenti', icon: IconRefresh, count: updatesCount }]
+      : []),
   ];
 
   const libraryName = useStore(libraryNameOf);
@@ -231,7 +242,14 @@ export default function Sidebar({
                   >
                     {item.label}
                   </span>
-                  {active && <span className="ml-auto h-1.5 w-1.5 rounded-full bg-coral-500" />}
+                  {item.count != null && (
+                    <span className="ml-auto rounded-full bg-coral-500 px-1.5 py-0.5 text-[10px] font-semibold tabular-nums leading-none text-white">
+                      {item.count}
+                    </span>
+                  )}
+                  {item.count == null && active && (
+                    <span className="ml-auto h-1.5 w-1.5 rounded-full bg-coral-500" />
+                  )}
                 </button>
               );
             })}

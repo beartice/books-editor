@@ -8,6 +8,7 @@ import {
   setSetupRequiredHandler,
   setUnauthorizedHandler,
 } from './api';
+import { isFanficUpdateAvailable } from '@shared/types';
 import { cn, lengthOf, READING_STATUS_LABEL, releaseDateKey } from './utils';
 import type {
   BookHighlight,
@@ -32,6 +33,8 @@ export interface Filters {
   favoritesOnly: boolean;
   missingCover: boolean;
   missingMetadata: boolean;
+  /** Solo le fanfiction con nuovi capitoli (o completate) sul sito. */
+  updatesOnly: boolean;
 }
 
 export const EMPTY_FILTERS: Filters = {
@@ -45,6 +48,7 @@ export const EMPTY_FILTERS: Filters = {
   favoritesOnly: false,
   missingCover: false,
   missingMetadata: false,
+  updatesOnly: false,
 };
 
 export interface Toast {
@@ -112,7 +116,7 @@ function readerFromUrl(): ReaderTarget | null {
   return id && file ? { id, file } : null;
 }
 
-export type QuickFilter = 'all' | 'books' | 'fanfic' | 'favorites' | 'unread';
+export type QuickFilter = 'all' | 'books' | 'fanfic' | 'favorites' | 'unread' | 'updates';
 
 export function matchesQuickFilter(filters: Filters, quick: QuickFilter): boolean {
   const emptyArrays =
@@ -130,7 +134,8 @@ export function matchesQuickFilter(filters: Filters, quick: QuickFilter): boolea
         filters.readingStatus.length === 0 &&
         !filters.favoritesOnly &&
         !filters.missingCover &&
-        !filters.missingMetadata
+        !filters.missingMetadata &&
+        !filters.updatesOnly
       );
     case 'books':
       return (
@@ -140,7 +145,8 @@ export function matchesQuickFilter(filters: Filters, quick: QuickFilter): boolea
         filters.readingStatus.length === 0 &&
         !filters.favoritesOnly &&
         !filters.missingCover &&
-        !filters.missingMetadata
+        !filters.missingMetadata &&
+        !filters.updatesOnly
       );
     case 'fanfic':
       return (
@@ -150,7 +156,8 @@ export function matchesQuickFilter(filters: Filters, quick: QuickFilter): boolea
         filters.readingStatus.length === 0 &&
         !filters.favoritesOnly &&
         !filters.missingCover &&
-        !filters.missingMetadata
+        !filters.missingMetadata &&
+        !filters.updatesOnly
       );
     case 'favorites':
       return (
@@ -159,7 +166,8 @@ export function matchesQuickFilter(filters: Filters, quick: QuickFilter): boolea
         filters.readingStatus.length === 0 &&
         filters.favoritesOnly &&
         !filters.missingCover &&
-        !filters.missingMetadata
+        !filters.missingMetadata &&
+        !filters.updatesOnly
       );
     case 'unread':
       return (
@@ -169,7 +177,18 @@ export function matchesQuickFilter(filters: Filters, quick: QuickFilter): boolea
         filters.readingStatus[0] === 'unread' &&
         !filters.favoritesOnly &&
         !filters.missingCover &&
-        !filters.missingMetadata
+        !filters.missingMetadata &&
+        !filters.updatesOnly
+      );
+    case 'updates':
+      return (
+        emptyArrays &&
+        filters.kinds.length === 0 &&
+        filters.readingStatus.length === 0 &&
+        !filters.favoritesOnly &&
+        !filters.missingCover &&
+        !filters.missingMetadata &&
+        filters.updatesOnly
       );
   }
 }
@@ -293,6 +312,7 @@ function matchesFilters(book: BookSummary, filters: Filters): boolean {
   if (filters.favoritesOnly && !book.favorite) return false;
   if (filters.missingCover && book.coverFile) return false;
   if (filters.missingMetadata && book.authors.length && book.description) return false;
+  if (filters.updatesOnly && !isFanficUpdateAvailable(book.fanficUpdate)) return false;
   return true;
 }
 
@@ -566,6 +586,7 @@ export const useStore = create<State>((set, get) => ({
       if (quick === 'fanfic') next.kinds = ['fanfic'];
       if (quick === 'favorites') next.favoritesOnly = true;
       if (quick === 'unread') next.readingStatus = ['unread'];
+      if (quick === 'updates') next.updatesOnly = true;
       return { filters: next };
     }),
 

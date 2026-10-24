@@ -1,10 +1,25 @@
-import { execFile } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
+import fsp from 'node:fs/promises';
 import { promisify } from 'node:util';
 import { BROWSER_USER_AGENT } from './fanfic.js';
+import { ao3CookieHeader, withAo3Jar } from './ao3session.js';
 
 const execFileAsync = promisify(execFile);
 
+/** Programma curl; `AO3_CURL` lo sostituisce (prove con un finto curl). */
+const curlBin = () => process.env.AO3_CURL || 'curl';
+
 const STATUS_MARKER = '\n__AO3_HTTP_STATUS__:';
+
+/** Errore HTTP di AO3 con il codice di stato, per distinguere 404 e limiti di richieste. */
+export class Ao3HttpError extends Error {
+  constructor(
+    readonly status: number,
+    message: string,
+  ) {
+    super(message);
+  }
+}
 
 /**
  * Ultima spiaggia quando né curl né Node riescono a raggiungere AO3: un
@@ -53,8 +68,12 @@ export async function fetchAo3WithReader(url: string, timeoutMs: number): Promis
  * Il comando è sempre eseguito senza shell e l'URL è costruito dal chiamante
  * solo con ID numerici AO3.
  */
-export async function fetchAo3WithCurl(url: string, timeoutMs: number): Promise<string> {
-  const seconds = Math.max(1, Math.min(15, Math.ceil(timeoutMs / 1000)));
+export async function fetchAo3WithCurl(
+  url: string,
+  timeoutMs: number,
+  maxSeconds = 15,
+): Promise<string> {
+  const seconds = Math.max(1, Math.min(maxSeconds, Math.ceil(timeoutMs / 1000)));
   const args = [
     // Ignora un eventuale ~/.curlrc dell'utente: la richiesta deve essere
     // riproducibile sul server.
@@ -84,17 +103,18 @@ export async function fetchAo3WithCurl(url: string, timeoutMs: number): Promise<
     'Upgrade-Insecure-Requests: 1',
     '-w',
     STATUS_MARKER + '%{http_code}',
-    '--',
-    url,
   ];
 
   let stdout: string;
   try {
-    const result = await execFileAsync('curl', args, {
-      encoding: 'utf8',
-      maxBuffer: 12 * 1024 * 1024,
-      timeout: (seconds + 2) * 1000,
-    });
+    // Con l'accesso ad AO3 la richiesta porta i cookie della sessione.
+    const result = await withAo3Jar((jarArgs) =>
+      execFileAsync(curlBin(), [...args, ...jarArgs, '--', url], {
+        encoding: 'utf8',
+        maxBuffer: 12 * 1024 * 1024,
+        timeout: (seconds + 2) * 1000,
+      }),
+    );
     stdout = result.stdout;
   } catch (error) {
     const code = (error as { code?: unknown }).code;
@@ -118,10 +138,134 @@ export async function fetchAo3WithCurl(url: string, timeoutMs: number): Promise<
   const status = Number.parseInt(stdout.slice(markerIndex + STATUS_MARKER.length).trim(), 10);
   const body = stdout.slice(0, markerIndex);
   if (status === 404) {
-    throw new Error('AO3 non trova la pagina (potrebbe essere stata eliminata)');
+    throw new Ao3HttpError(404, 'AO3 non trova la pagina (potrebbe essere stata eliminata)');
   }
   if (status < 200 || status >= 300) {
-    throw new Error(`AO3 non raggiungibile (HTTP ${status})`);
+    throw new Ao3HttpError(status, `AO3 non raggiungibile (HTTP ${status})`);
   }
   return body;
 }
+
+/**
+ * Variante binaria di `fetchAo3WithCurl`: scarica un file (l'EPUB di un'opera)
+ * direttamente su disco con `-o`, senza passare dalla memoria di Node. Stessa
+ * connessione TLS di curl, che Cloudflare lascia passare piu' spesso.
+ * Senza curl usa il fetch di Node. Il file viene scritto in `destination`
+ * solo se la risposta e' 2xx.
+ */
+export async function downloadAo3File(
+  url: string,
+  destination: string,
+  timeoutMs: number,
+): Promise<void> {
+  const seconds = Math.max(1, Math.ceil(timeoutMs / 1000));
+  const args = [
+    '-q',
+    '-sS',
+    '-L',
+    '--connect-timeout',
+    '10',
+    '--max-time',
+    String(seconds),
+    '-A',
+    BROWSER_USER_AGENT,
+    '-H',
+    'Accept: application/epub+zip,application/octet-stream,*/*;q=0.8',
+    '-H',
+    'Accept-Language: en-US,en;q=0.9,it;q=0.8',
+    '-o',
+    destination,
+    '-w',
+    '%{http_code}',
+  ];
+
+  let status: number;
+  try {
+    const result = await withAo3Jar((jarArgs) =>
+      execFileAsync(curlBin(), [...args, ...jarArgs, '--', url], {
+        encoding: 'utf8',
+        timeout: (seconds + 2) * 1000,
+      }),
+    );
+    status = Number.parseInt(result.stdout.trim(), 10);
+  } catch (error) {
+    await fsp.rm(destination, { force: true });
+    const code = (error as { code?: unknown }).code;
+    if (code === 'ENOENT') return downloadAo3WithFetch(url, destination, timeoutMs);
+    const killed = (error as { killed?: boolean }).killed;
+    if (code === 28 || code === '28' || killed) throw new Error('AO3 non risponde (timeout)');
+    throw new Error('AO3 non raggiungibile durante il download');
+  }
+  if (status < 200 || status >= 300) {
+    await fsp.rm(destination, { force: true });
+    if (status === 404) throw new Ao3HttpError(404, 'AO3 non trova il file (potrebbe essere stato eliminato)');
+    throw new Ao3HttpError(status, `AO3 non raggiungibile (HTTP ${status})`);
+  }
+}
+
+/** Ripiego senza curl (es. Windows): fetch di Node, scritto su disco. */
+async function downloadAo3WithFetch(
+  url: string,
+  destination: string,
+  timeoutMs: number,
+): Promise<void> {
+  let response: Response;
+  try {
+    const cookie = ao3CookieHeader();
+    response = await fetch(url, {
+      headers: { 'User-Agent': BROWSER_USER_AGENT, Accept: '*/*', ...(cookie ? { Cookie: cookie } : {}) },
+      redirect: 'follow',
+      signal: AbortSignal.timeout(Math.max(1000, timeoutMs)),
+    });
+  } catch (error) {
+    if ((error as Error).name === 'TimeoutError') throw new Error('AO3 non risponde (timeout)');
+    throw new Error(`AO3 non raggiungibile: ${(error as Error).message}`);
+  }
+  if (!response.ok) {
+    throw new Ao3HttpError(response.status, `AO3 non raggiungibile (HTTP ${response.status})`);
+  }
+  await fsp.writeFile(destination, Buffer.from(await response.arrayBuffer()));
+}
+
+/**
+ * Esegue curl senza shell. Il corpo di una richiesta con dati sensibili (la
+ * password dell'accesso) si passa da `stdin` come configurazione (`-K -`): non
+ * compare mai fra gli argomenti del processo. Lo stderr di curl non viene
+ * conservato ne' riportato negli errori.
+ */
+export function runCurl(
+  args: string[],
+  options: { stdin?: string; timeoutMs: number },
+): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(curlBin(), args, { stdio: ['pipe', 'pipe', 'pipe'] });
+    const chunks: Buffer[] = [];
+    let size = 0;
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      child.kill('SIGTERM');
+    }, options.timeoutMs);
+    child.stdout.on('data', (chunk: Buffer) => {
+      size += chunk.length;
+      if (size <= 12 * 1024 * 1024) chunks.push(chunk);
+    });
+    child.stderr.on('data', () => undefined);
+    child.on('error', (error: NodeJS.ErrnoException) => {
+      clearTimeout(timer);
+      const failure = new Error(error.code === 'ENOENT' ? 'curl non disponibile' : 'curl non eseguibile');
+      (failure as NodeJS.ErrnoException).code = error.code;
+      reject(failure);
+    });
+    child.on('close', (code) => {
+      clearTimeout(timer);
+      if (timedOut) return reject(new Error('AO3 non risponde (timeout)'));
+      if (code !== 0) return reject(new Error('AO3 non raggiungibile'));
+      resolve(Buffer.concat(chunks).toString('utf8'));
+    });
+    child.stdin.on('error', () => undefined);
+    child.stdin.end(options.stdin ?? '');
+  });
+}
+
+export { STATUS_MARKER };

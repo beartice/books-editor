@@ -17,6 +17,7 @@ import {
 import { prepareLibraryRoot } from './libraryRoot.js';
 import {
   LibraryError,
+  allLibraries,
   allLibraryRoots,
   createLibrary,
   currentLibrary,
@@ -59,7 +60,15 @@ import { compareLocations, importAppleBooks, importAppleBooksFromRows, syncApple
 import { AppleBooksInputError, parseAppleBooksInput } from './appleBooksInput.js';
 import { buildEpubWithMetadata, writeEpubMetadata } from './epubWrite.js';
 import { AppleBooksError, appleBooksStatus, writeToAppleBooks, type AppleBooksField } from './appleBooksWrite.js';
+import { Ao3LoginError, loginAo3 } from './ao3login.js';
+import { ao3SessionInfo, clearAo3Session } from './providers/ao3session.js';
 import { buildEpub, buildOdt, importEfpStory, loadEfpStory } from './efp.js';
+import {
+  dismissFanficUpdate,
+  getFanficCheckState,
+  startFanficCheck,
+  updateFanficStory,
+} from './fanficUpdates.js';
 import {
   getJellyfinImportState,
   getJellyfinInfo,
@@ -466,6 +475,57 @@ export async function registerApi(app: FastifyInstance): Promise<void> {
       }
     },
   );
+
+  /* ------------------------------------------- aggiornamenti delle fanfic -- */
+  /* --------------------------------------------------------- account AO3 -- */
+  /** Accesso ad AO3: la password serve solo per questa richiesta, il server conserva la sessione. */
+  app.post<{ Body: { username?: string; password?: string } | undefined }>('/api/ao3/login', async (request, reply) => {
+    const username = typeof request.body?.username === 'string' ? request.body.username.trim() : '';
+    const password = typeof request.body?.password === 'string' ? request.body.password : '';
+    if (!username || !password) return reply.code(400).send({ error: 'Inserisci utente e password di AO3' });
+    try {
+      await loginAo3(username, password);
+      return ao3SessionInfo();
+    } catch (error) {
+      if (error instanceof Ao3LoginError) return reply.code(error.status).send({ error: error.message });
+      return reply.code(502).send({ error: 'Accesso ad AO3 non riuscito' });
+    }
+  });
+
+  app.get('/api/ao3/session', async () => ao3SessionInfo());
+
+  app.post('/api/ao3/logout', async () => {
+    await clearAo3Session();
+    return ao3SessionInfo();
+  });
+
+  /** Avvia il controllo dei nuovi capitoli (libreria aperta, o `all` per tutte). Un solo giro alla volta. */
+  app.post<{ Body: { all?: boolean } | undefined }>('/api/fanfic-updates/check', async (request) => {
+    const libraries = request.body?.all === true ? await allLibraries() : [currentLibrary()];
+    return startFanficCheck(libraries);
+  });
+
+  app.get('/api/fanfic-updates/status', async () => getFanficCheckState());
+
+  /** Aggiorna la storia dal sito: AO3 scarica un EPUB nuovo, EFP rifa l'importazione. */
+  app.post<{ Params: { id: string } }>('/api/books/:id/fanfic-update', async (request, reply) => {
+    try {
+      return await updateFanficStory(request.params.id);
+    } catch (error) {
+      const message = (error as Error).message;
+      return reply.code(message === 'Libro non trovato' ? 404 : 400).send({ error: message });
+    }
+  });
+
+  /** «Ignora» l'avviso finche' non arrivano altri capitoli. */
+  app.post<{ Params: { id: string } }>('/api/books/:id/fanfic-update/dismiss', async (request, reply) => {
+    try {
+      return await dismissFanficUpdate(request.params.id);
+    } catch (error) {
+      const message = (error as Error).message;
+      return reply.code(message === 'Libro non trovato' ? 404 : 400).send({ error: message });
+    }
+  });
 
   app.delete<{ Params: { id: string }; Querystring: { keepFiles?: string } }>(
     '/api/books/:id',

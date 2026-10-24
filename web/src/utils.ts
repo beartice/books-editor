@@ -1,7 +1,14 @@
-import type { BookSummary, ReadingStatus, SortKey } from '@shared/types';
+import { isFanficUpdateAvailable } from '@shared/types';
+import type { BookSummary, FanficUpdate, ReadingStatus, SortKey } from '@shared/types';
 
 export function cn(...values: Array<string | false | null | undefined>): string {
   return values.filter(Boolean).join(' ');
+}
+
+/** Etichetta della card per un aggiornamento da segnalare: «+2 cap.» o «Completata»; null se non c'e'. */
+export function fanficUpdateLabel(update: FanficUpdate | null | undefined): string | null {
+  if (!isFanficUpdateAvailable(update) || !update) return null;
+  return update.newChapters > 0 ? `+${update.newChapters} cap.` : 'Completata';
 }
 
 export function formatWords(count: number | null | undefined): string {

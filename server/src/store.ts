@@ -175,5 +175,6 @@ export function toSummary(book: BookMeta): BookSummary {
     description: book.description,
     isbn: book.isbn,
     ao3Url: book.ao3Url ?? '',
+    fanficUpdate: book.fanficUpdate ?? null,
   };
 }

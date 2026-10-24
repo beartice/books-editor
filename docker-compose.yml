@@ -50,6 +50,14 @@ services:
       LOG_LEVEL: ${LOG_LEVEL:-info}
       # Tempo massimo di una conversione di formato, in secondi (default 600).
       CONVERT_TIMEOUT_SEC: ${CONVERT_TIMEOUT_SEC:-600}
+      # Fuso orario del container: il controllo notturno dei nuovi capitoli delle
+      # fanfiction parte all'ora locale (FANFIC_CHECK_HOUR). Senza TZ sarebbe UTC.
+      TZ: ${TZ:-Europe/Rome}
+      # Controllo automatico dei nuovi capitoli (AO3, EFP): "off" lo disattiva;
+      # parte ogni giorno all'ora indicata, con una pausa fra una richiesta e l'altra.
+      FANFIC_CHECK: ${FANFIC_CHECK:-on}
+      FANFIC_CHECK_HOUR: ${FANFIC_CHECK_HOUR:-3}
+      FANFIC_CHECK_DELAY_SEC: ${FANFIC_CHECK_DELAY_SEC:-6}
     volumes:
       # La libreria (epub, copertine, book.json) vive qui. LIBRARY_PATH la
       # sposta, ad esempio su un disco dedicato.

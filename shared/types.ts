@@ -33,6 +33,64 @@ export interface ReadingPosition {
   updatedAt: string;
 }
 
+/** Esito dell'ultimo controllo dei nuovi capitoli di una fanfiction (AO3, EFP). */
+export interface FanficUpdate {
+  /** Momento del controllo (ISO 8601). */
+  checkedAt: string;
+  /** Capitoli pubblicati sul sito, null se non letti. */
+  remoteChapters: number | null;
+  /** Capitoli previsti dall'autore (la Y di «7/10»), null se «?» o sconosciuti. */
+  remoteTotal: number | null;
+  remoteComplete: boolean;
+  /** Data dell'ultimo aggiornamento sul sito, se la pagina la indica. */
+  remoteUpdated: string | null;
+  /** Capitoli in piu' rispetto alla scheda. */
+  newChapters: number;
+  /** La storia e' stata completata sul sito e la scheda la ha ancora in corso. */
+  completed: boolean;
+  /** Motivo per cui l'ultimo controllo non e' riuscito (accesso richiesto, opera cancellata...). */
+  error: string | null;
+  /** Numero di capitoli remoti per cui l'utente ha scelto «Ignora». */
+  dismissedChapters?: number | null;
+}
+
+/** true se c'e' un aggiornamento da segnalare e l'utente non lo ha gia' ignorato. */
+export function isFanficUpdateAvailable(update: FanficUpdate | null | undefined): boolean {
+  if (!update) return false;
+  if (update.newChapters <= 0 && !update.completed) return false;
+  return update.remoteChapters !== (update.dismissedChapters ?? undefined);
+}
+
+/** Sessione AO3 dell'utente (il server conserva solo i cookie, mai la password). */
+export interface Ao3SessionState {
+  loggedIn: boolean;
+  username: string | null;
+  loggedInAt: string | null;
+  /** true se AO3 ha rifiutato la sessione: serve un nuovo accesso. */
+  expired?: boolean;
+}
+
+/** Stato del giro di controllo degli aggiornamenti delle fanfiction. */
+export interface FanficCheckState {
+  running: boolean;
+  /** Opere controllate finora e totale del giro in corso (o dell'ultimo). */
+  done: number;
+  total: number;
+  /** Opere con un aggiornamento trovato. */
+  found: number;
+  errors: number;
+  startedAt: string | null;
+  finishedAt: string | null;
+  /** Fine dell'ultimo giro (salvata su disco), null se non e' mai stato fatto. */
+  lastRunAt: string | null;
+  /** Motivo per cui il giro si e' fermato prima della fine (limite di richieste). */
+  stopReason: string | null;
+  /** false se il controllo notturno e' disattivato (FANFIC_CHECK=off). */
+  automatic: boolean;
+  /** Ora locale del controllo notturno. */
+  hour: number;
+}
+
 export interface BookMeta {
   id: string;
   kind: BookKind;
@@ -93,6 +151,8 @@ export interface BookMeta {
   ffnetUrl: string;
   /** Link della storia su EFP Fanfiction (efpfanfic.net). */
   efpUrl: string;
+  /** Esito dell'ultimo controllo dei nuovi capitoli sul sito. Gestito solo dal server. */
+  fanficUpdate?: FanficUpdate | null;
 
   /* --- campi personali --- */
   notes: string;
@@ -165,6 +225,8 @@ export interface BookSummary {
   isbn: string;
   /** Link AO3, usato per cercare le altre opere della serie. */
   ao3Url: string;
+  /** Esito dell'ultimo controllo dei nuovi capitoli (vedi BookMeta.fanficUpdate). */
+  fanficUpdate?: FanficUpdate | null;
 }
 
 /** Colore di una sottolineatura, come mostrato da Apple Books. */

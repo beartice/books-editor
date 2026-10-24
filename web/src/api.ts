@@ -4,11 +4,13 @@ import type {
   AppleBooksRawData,
   AppleBooksWriteField,
   AppleBooksWriteStatus,
+  Ao3SessionState,
   BookHighlight,
   BookKind,
   BookMeta,
   BookSummary,
   ConversionSupport,
+  FanficCheckState,
   HighlightColor,
   LibraryStats,
   LibrarySummary,
@@ -425,6 +427,15 @@ export const api = {
     }),
   jellyfinImportState: () => request<JellyfinImportState | null>('/jellyfin/import'),
   folders: () => request<string[]>('/library/folders'),
+  ao3Session: () => request<Ao3SessionState>('/ao3/session'),
+  ao3Login: (username: string, password: string) =>
+    request<Ao3SessionState>('/ao3/login', { method: 'POST', body: JSON.stringify({ username, password }) }),
+  ao3Logout: () => request<Ao3SessionState>('/ao3/logout', { method: 'POST' }),
+  fanficCheck: (all = false) =>
+    request<FanficCheckState>('/fanfic-updates/check', { method: 'POST', body: JSON.stringify({ all }) }),
+  fanficCheckState: () => request<FanficCheckState>('/fanfic-updates/status'),
+  fanficUpdate: (id: string) => request<BookMeta>(`/books/${id}/fanfic-update`, { method: 'POST' }),
+  fanficDismiss: (id: string) => request<BookMeta>(`/books/${id}/fanfic-update/dismiss`, { method: 'POST' }),
   createBook: (payload: { title: string; authors: string[]; kind: 'book' | 'fanfic' }) =>
     request<BookMeta>('/library/new', { method: 'POST', body: JSON.stringify(payload) }),
 };

@@ -5,6 +5,8 @@ import { ApiError, api } from '../api';
 import type { AppleBooksImportResult } from '@shared/types';
 import { desktop, importAppleBooksViaApp, setAppleAutoSync } from '../desktop';
 import { IconClose, IconFolder, IconLogout } from './icons';
+import FanficSettingsSection from './FanficSettingsSection';
+import Ao3AccountSection from './Ao3AccountSection';
 
 interface Props {
   onClose: () => void;
@@ -383,6 +385,10 @@ export default function SettingsDialog({ onClose }: Props) {
               </p>
             )}
           </div>
+
+          <Ao3AccountSection />
+
+          <FanficSettingsSection />
 
           <div className="rounded-lg border border-black/[0.06] bg-ink-800 p-3">
             <div className="mb-1 flex items-center justify-between gap-2">

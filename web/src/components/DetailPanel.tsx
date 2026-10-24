@@ -14,6 +14,7 @@ import {
 } from '../utils';
 import BookCover from './BookCover';
 import CoverEditor from './CoverEditor';
+import FanficUpdateBox from './FanficUpdateBox';
 import HighlightsTab from './HighlightsTab';
 import LanguagesSection from './LanguagesSection';
 import MoveBookMenu from './MoveBookMenu';
@@ -918,6 +919,7 @@ export default function DetailPanel({
         <div className="flex-1 overflow-y-auto p-4">
           {detailTab === 'details' && (
             <div className="space-y-6">
+              <FanficUpdateBox meta={meta} />
               <div className="flex flex-wrap items-center gap-3 rounded-xl border border-black/[0.06] bg-ink-800 p-3">
                 <StarPicker
                   value={meta.rating}

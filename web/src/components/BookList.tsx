@@ -1,5 +1,5 @@
 import { useStore } from '../store';
-import { formatDate, formatDuration, formatRating, formatWords, cn } from '../utils';
+import { fanficUpdateLabel, formatDate, formatDuration, formatRating, formatWords, cn } from '../utils';
 import BookCover from './BookCover';
 import { IconStarFilled } from './icons';
 import type { BookSummary } from '@shared/types';
@@ -57,6 +57,11 @@ export default function BookList({ books }: { books: BookSummary[] }) {
                         {book.title || 'Senza titolo'}
                       </span>
                       {book.favorite && <span className="text-coral-500">♥</span>}
+                      {fanficUpdateLabel(book.fanficUpdate) && (
+                        <span className="shrink-0 rounded-full bg-coral-500 px-1.5 py-0.5 text-[8.5px] font-bold uppercase leading-none tracking-[0.08em] text-white">
+                          {fanficUpdateLabel(book.fanficUpdate)}
+                        </span>
+                      )}
                     </div>
                     <p className="mt-0.5 truncate text-[10.5px] text-ink-500 md:hidden">
                       {book.authors.join(', ') || 'Autore sconosciuto'}

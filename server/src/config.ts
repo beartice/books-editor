@@ -90,6 +90,25 @@ export const CORS_ORIGINS = envList('CORS_ORIGINS').map((origin) => origin.repla
 /** Cartelle da cui «Importa da percorso» puo' leggere (assolute). */
 export const IMPORT_ROOTS = envList('IMPORT_ROOTS').map((dir) => path.resolve(dir));
 
+/**
+ * Controllo automatico dei nuovi capitoli delle fanfiction (AO3, EFP).
+ * `FANFIC_CHECK=off` lo disattiva; parte ogni giorno all'ora locale `FANFIC_CHECK_HOUR`
+ * (0-23, default 3); fra una richiesta e l'altra passano `FANFIC_CHECK_DELAY_SEC` secondi.
+ */
+export const FANFIC_CHECK_ENABLED = !['off', '0', 'false', 'no'].includes(
+  (process.env.FANFIC_CHECK ?? '').trim().toLowerCase(),
+);
+export const FANFIC_CHECK_HOUR = (() => {
+  const value = Number(process.env.FANFIC_CHECK_HOUR);
+  return process.env.FANFIC_CHECK_HOUR?.trim() && Number.isInteger(value) && value >= 0 && value <= 23
+    ? value
+    : 3;
+})();
+export const FANFIC_CHECK_DELAY_SEC = (() => {
+  const value = Number(process.env.FANFIC_CHECK_DELAY_SEC);
+  return process.env.FANFIC_CHECK_DELAY_SEC?.trim() && Number.isFinite(value) && value >= 0 ? value : 6;
+})();
+
 export const WEB_DIST = path.join(PROJECT_ROOT, 'web', 'dist');
 
 export function ensureDir(dir: string): string {

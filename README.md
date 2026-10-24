@@ -20,6 +20,7 @@ Funziona in locale sul computer e si installa sul tuo server senza modifiche
 | **Compilazione automatica** | Opzione «Compila in automatico»: all'importazione i campi vuoti vengono completati online da soli, solo se il risultato combacia chiaramente con titolo e autore. |
 | **Fanfic** | Riconosce automaticamente il tipo di opera e ne estrae fandom, ship, personaggi, rating, stato, capitoli, parole, tag e serie dalle tabelle «Info» tipiche degli epub. Con il link AO3, la finestra **Serie** elenca anche le opere mancanti della serie. |
 | **EFP Fanfiction** | Incolla il link di una storia di `efpfanfic.net`: scarica tutti i capitoli e la importa come EPUB + ODT, con titolo, autore, fandom, tag, personaggi, rating, stato, capitoli e parole. Reimportare la stessa storia aggiorna la scheda esistente. |
+| **Nuovi capitoli** | Ogni notte l'app controlla su AO3 ed EFP se le fanfiction in corso hanno nuovi capitoli o sono state completate (anche a mano, da Impostazioni → Fanfiction). Avvisa soltanto: la card mostra «+N cap.» o «Completata», la sidebar il filtro «Aggiornamenti», e dalla scheda «Aggiorna storia» scarica di nuovo la storia (voto, stato di lettura e sottolineature restano; l'EPUB AO3 precedente va in `.backup/`). FanFiction.net è escluso. |
 | **Sottolineature Apple Books** | Importa evidenziazioni e note dal database locale di Libri (macOS), le abbina ai libri per titolo/autore e le mostra nella scheda **Sottolineature**, con ricerca ed export Markdown. |
 | **Lettore integrato** | Il pulsante **Leggi** nella scheda apre EPUB e PDF a tutto schermo, dal sito (anche su iPhone) e dall'app Mac. EPUB: pagine, indice, dimensione del testo e temi chiaro/seppia/scuro; PDF: zoom e salto a una pagina. La posizione si salva sul server e si riprende da qualunque dispositivo, e l'avanzamento aggiorna la barra nella scheda; con Apple Books vince l'aggiornamento più recente. Gli script contenuti negli EPUB non vengono mai eseguiti. |
 | **Copertine** | Estrazione automatica dall'epub, caricamento (drag & drop), download da URL, rimozione. |
@@ -471,6 +472,9 @@ l'app non vede l'IP reale ne' l'HTTPS.
 | `GOOGLE_BOOKS_API_KEY` | — | Chiave Google Books (facoltativa; alternativa: impostarla dall'interfaccia) |
 | `MAX_UPLOAD_MB` | `300` | Dimensione massima (1-4096 MB) dei file caricati dal browser. Anche il reverse proxy deve accettarla: in nginx `client_max_body_size` un po' sopra questo valore (es. `310m`), altrimenti risponde 413 |
 | `CONVERT_TIMEOUT_SEC` | `600` | Tempo massimo di una conversione di formato (MOBI, AZW3, FB2, DJVU). Anche il reverse proxy deve attendere: in nginx `proxy_read_timeout` di almeno 900s sulle route di caricamento (vedi `deploy/nginx/books-editor.conf.example`) |
+| `FANFIC_CHECK` | `on` | `off` disattiva il controllo automatico dei nuovi capitoli delle fanfiction AO3 ed EFP. Il controllo avvisa soltanto (etichetta sulla card, filtro «Aggiornamenti»); la storia si aggiorna dalla scheda. Il pulsante «Controlla aggiornamenti ora» nelle Impostazioni funziona comunque |
+| `FANFIC_CHECK_HOUR` | `3` | Ora locale (0-23) del controllo notturno. Nel container conta `TZ` (default `Europe/Rome` nel compose). Se l'ultimo giro risale a più di 24 ore fa, ne parte uno 10 minuti dopo l'avvio |
+| `FANFIC_CHECK_DELAY_SEC` | `6` | Pausa in secondi fra una richiesta e l'altra ai siti durante il controllo |
 | `LOG_LEVEL` | `info` | Livello di log |
 
 ### Google Books: errore HTTP 429

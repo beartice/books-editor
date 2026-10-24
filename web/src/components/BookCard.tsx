@@ -1,5 +1,5 @@
 import { useStore } from '../store';
-import { cn, formatDuration, formatRating, formatWords } from '../utils';
+import { cn, fanficUpdateLabel, formatDuration, formatRating, formatWords } from '../utils';
 import BookCover from './BookCover';
 import { IconHeart, IconStarFilled } from './icons';
 import type { BookSummary } from '@shared/types';
@@ -7,6 +7,8 @@ import type { BookSummary } from '@shared/types';
 export default function BookCard({ book }: { book: BookSummary }) {
   const select = useStore((state) => state.select);
   const selectedId = useStore((state) => state.selectedId);
+
+  const updateLabel = fanficUpdateLabel(book.fanficUpdate);
 
   const seriesLabel =
     book.series && book.seriesIndex != null
@@ -43,8 +45,18 @@ export default function BookCard({ book }: { book: BookSummary }) {
         <div className="pointer-events-none absolute inset-0 rounded-[14px] bg-gradient-to-t from-ink-950/35 via-transparent to-transparent opacity-0 transition-opacity duration-300 group-hover:opacity-100" />
 
         {book.kind === 'fanfic' && (
-          <span className="absolute left-2.5 top-2.5 rounded-full bg-white/90 px-2 py-0.5 text-[8.5px] font-bold uppercase tracking-[0.12em] text-coral-600 shadow-sm backdrop-blur">
-            fanfic
+          <span className="absolute left-2.5 top-2.5 flex flex-col items-start gap-1">
+            <span className="rounded-full bg-white/90 px-2 py-0.5 text-[8.5px] font-bold uppercase tracking-[0.12em] text-coral-600 shadow-sm backdrop-blur">
+              fanfic
+            </span>
+            {updateLabel && (
+              <span
+                className="rounded-full bg-coral-500 px-2 py-0.5 text-[8.5px] font-bold uppercase tracking-[0.1em] text-white shadow-sm"
+                title="Aggiornamento disponibile sul sito"
+              >
+                {updateLabel}
+              </span>
+            )}
           </span>
         )}
         {book.favorite && (

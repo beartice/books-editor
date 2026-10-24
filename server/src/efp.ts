@@ -494,9 +494,13 @@ function wordCountOf(chapters: EfpChapter[]): number {
   );
 }
 
-export async function loadEfpStory(input: string): Promise<EfpStory> {
+/** Con `fresh` salta la cache (10 minuti): serve al controllo degli aggiornamenti. */
+export async function loadEfpStory(
+  input: string,
+  options: { fresh?: boolean } = {},
+): Promise<EfpStory> {
   const { sid: requestedSid, url: requestedUrl } = parseEfpUrl(input);
-  const cachedRequested = storyCache.get(requestedSid);
+  const cachedRequested = options.fresh ? undefined : storyCache.get(requestedSid);
   if (cachedRequested && Date.now() - cachedRequested.at < CACHE_TTL) {
     return cachedRequested.story;
   }
@@ -519,7 +523,7 @@ export async function loadEfpStory(input: string): Promise<EfpStory> {
   const sid = firstChapterSid || requestedSid;
   const url = `${BASE}/viewstory.php?sid=${sid}`;
 
-  const cached = storyCache.get(sid);
+  const cached = options.fresh ? undefined : storyCache.get(sid);
   if (cached && Date.now() - cached.at < CACHE_TTL) {
     storyCache.set(requestedSid, cached);
     return cached.story;

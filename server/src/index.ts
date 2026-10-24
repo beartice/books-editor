@@ -10,6 +10,7 @@ import { registerLibraryContext, allLibraries, runInLibrary } from './libraries.
 import { registerApi } from './routes.js';
 import { loadSettings } from './store.js';
 import { scanLibrary } from './library.js';
+import { scheduleFanficChecks } from './fanficUpdates.js';
 
 try {
   checkAuthConfig();
@@ -143,6 +144,9 @@ async function bootstrap(): Promise<void> {
   await app.listen({ port: PORT, host: HOST });
   app.log.info(`Libreria: ${settings.libraryRoot}`);
   app.log.info(`Server in ascolto su http://${HOST}:${PORT}`);
+
+  // Controllo notturno dei nuovi capitoli delle fanfiction (FANFIC_CHECK=off lo disattiva).
+  scheduleFanficChecks(allLibraries);
 }
 
 bootstrap().catch((error) => {

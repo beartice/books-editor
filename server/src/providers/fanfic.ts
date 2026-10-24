@@ -1,4 +1,5 @@
 import { safeFetch } from '../net.js';
+import { ao3CookieHeader } from './ao3session.js';
 import type { BookMeta, MetadataCandidate } from '../../../shared/types.js';
 
 /**
@@ -340,6 +341,49 @@ function parseAo3Page(html: string, url: string): MetadataCandidate | null {
   };
 }
 
+/** Avanzamento di un'opera AO3 letto dal blocco delle statistiche della pagina. */
+export interface Ao3Progress {
+  /** Capitoli pubblicati (la X di «X/Y»). */
+  chapters: number | null;
+  /** Capitoli previsti (la Y), null se «?». */
+  total: number | null;
+  /** true se AO3 la dichiara completa (campo «Completed» o X == Y). */
+  complete: boolean;
+  /** Data di «Updated» o «Completed» (AAAA-MM-GG), null se assente. */
+  updated: string | null;
+  words: number | null;
+}
+
+/**
+ * Legge capitoli, completezza, data dell'ultimo aggiornamento e parole dalla
+ * pagina di un'opera AO3. Restituisce null se la pagina non ha le statistiche
+ * (accesso richiesto, pagina d'errore, interstiziale).
+ */
+export function parseAo3Progress(html: string): Ao3Progress | null {
+  const statsHtml =
+    html.match(/<dl\b[^>]*class=["'][^"']*\bstats\b[^"']*["'][^>]*>[\s\S]*?<\/dl>/i)?.[0] ?? '';
+  if (!statsHtml) return null;
+  const stats = extractAo3Pairs(statsHtml);
+  const chapterText = firstPairValue(stats, ['chapters'], ['chapters', 'chapter count']);
+  if (!chapterText) return null;
+  const chapters = parseChapterCount(chapterText);
+
+  // «Completed» e «Updated» hanno la stessa classe `status`: li distingue l'etichetta.
+  const completed = firstPairValue(stats, [], ['completed', 'completed on']);
+  const updated = firstPairValue(stats, [], ['updated', 'updated on', 'last updated']);
+  const complete =
+    Boolean(completed) ||
+    (chapters.current !== null && chapters.total !== null && chapters.current >= chapters.total);
+
+  return {
+    chapters: chapters.current,
+    total: chapters.total,
+    complete,
+    updated: completed || updated || null,
+    words: parseNumber(firstPairValue(stats, ['words'], ['words', 'word count'])),
+  };
+}
+
 function parseLabelPairs(html: string): Record<string, string> {
   const result: Record<string, string> = {};
   const text = decodeEntities(
@@ -539,6 +583,9 @@ async function fetchHtml(
     Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
     'Accept-Language': 'en-US,en;q=0.9,it;q=0.8',
   };
+  // Con l'accesso ad AO3 le opere riservate agli utenti registrati sono leggibili.
+  const cookie = target.isAo3 ? ao3CookieHeader() : null;
+  if (cookie) headers.Cookie = cookie;
 
   // Su AO3 il parametro `view_adult=true` a volte fa rispondere Cloudflare
   // con 525/timeout: proviamo prima l'URL normale e lo aggiungiamo solo se
