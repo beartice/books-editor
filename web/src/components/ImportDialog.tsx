@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { api, ApiError, tooLargeMessage } from '../api';
 import type { EfpImportResult, JellyfinImportState, JellyfinLibrary, JellyfinPreview } from '../api';
 import type { BookMeta, BookSummary, ConversionSupport } from '@shared/types';
@@ -11,6 +11,103 @@ interface Props {
   onClose: () => void;
 }
 
+type DuplicateInfo = {
+  reason: string;
+  book: BookSummary;
+  language?: string;
+  existingLanguages?: string[];
+};
+
+type DuplicateDecision =
+  | { action: 'force' }
+  | { action: 'attach'; bookId: string; language: string }
+  | { action: 'skip' }
+  | { action: 'skipAll' };
+
+/** Motivi con cui il server riconosce un duplicato. */
+const DUPLICATE_REASONS: Record<string, string> = {
+  file: 'stesso file',
+  isbn: 'stesso ISBN',
+  source: 'stessa fonte, stesso link',
+  title: 'stesso titolo e autore',
+};
+
+/** Il duplicato descritto da un errore 409 del server, se e' quello il problema. */
+function duplicateOf(error: unknown): DuplicateInfo | null {
+  const body = error instanceof ApiError && error.status === 409 ? error.body : null;
+  return (body as { duplicate?: DuplicateInfo } | null)?.duplicate ?? null;
+}
+
+// Estensioni sempre importabili; a queste si aggiungono quelle convertite dal server.
+const BASE_EXTENSIONS = ['.epub', '.pdf', '.docx', '.txt', '.md', '.rtf'];
+
+/** Un file scelto per l'import, con il percorso relativo alla cartella scelta (per il riepilogo). */
+interface Candidate {
+  file: File;
+  path: string;
+}
+
+interface QueueEntry {
+  name: string;
+  reason: string;
+}
+
+interface QueueSummary {
+  imported: number;
+  attached: number;
+  duplicates: QueueEntry[];
+  errors: QueueEntry[];
+  tooLarge: QueueEntry[];
+  /** File di formato non importabile o nascosti, scartati senza avviso per file. */
+  ignored: number;
+  /** File rimasti fuori perche' la coda e' stata interrotta. */
+  notDone: number;
+}
+
+interface QueueProgress {
+  done: number;
+  total: number;
+  name: string;
+  converting: boolean;
+}
+
+/** Il file o un'ancestrale della sua cartella e' nascosto (.DS_Store, ._nome, .git...). */
+function isHiddenPath(path: string): boolean {
+  return path.split('/').some((part) => part.startsWith('.'));
+}
+
+/** Legge tutte le voci di una cartella: readEntries va richiamata finche' non torna vuota. */
+async function readDirectory(reader: FileSystemDirectoryReader): Promise<FileSystemEntry[]> {
+  const all: FileSystemEntry[] = [];
+  while (true) {
+    const batch = await new Promise<FileSystemEntry[]>((resolve, reject) =>
+      reader.readEntries(resolve, reject),
+    );
+    if (batch.length === 0) return all;
+    all.push(...batch);
+  }
+}
+
+/** Raccoglie ricorsivamente i file di una voce trascinata (file o cartella). */
+async function collectEntry(entry: FileSystemEntry, out: Candidate[]): Promise<void> {
+  const path = entry.fullPath.replace(/^\//, '');
+  if (entry.isFile) {
+    const file = await new Promise<File>((resolve, reject) =>
+      (entry as FileSystemFileEntry).file(resolve, reject),
+    );
+    out.push({ file, path });
+    return;
+  }
+  const children = await readDirectory((entry as FileSystemDirectoryEntry).createReader());
+  for (const child of children) await collectEntry(child, out);
+}
+
+// webkitdirectory sui telefoni non e' affidabile: il pulsante cartella c'e' solo con mouse e tastiera.
+const canPickFolder =
+  typeof document !== 'undefined' &&
+  'webkitdirectory' in document.createElement('input') &&
+  !window.matchMedia('(pointer: coarse)').matches;
+
 export default function ImportDialog({ onClose }: Props) {
   const [path, setPath] = useState('');
   const [busy, setBusy] = useState(false);
@@ -18,6 +115,11 @@ export default function ImportDialog({ onClose }: Props) {
   // Formati convertiti dal server (MOBI, AZW3, FB2, DJVU...) e conversione in corso.
   const [conversion, setConversion] = useState<ConversionSupport | null>(null);
   const [converting, setConverting] = useState(false);
+  // Import di piu' file (o di una cartella): avanzamento e riepilogo.
+  const [progress, setProgress] = useState<QueueProgress | null>(null);
+  const [summary, setSummary] = useState<QueueSummary | null>(null);
+  const stopRef = useRef(false);
+  const queueRunning = progress !== null;
   const [efpUrl, setEfpUrl] = useState('');
   const [efpBusy, setEfpBusy] = useState<'import' | 'download' | null>(null);
   const { load, select, toast, confirm, settings, libraries } = useStore();
@@ -117,63 +219,59 @@ export default function ImportDialog({ onClose }: Props) {
   };
 
   /**
-   * Se l'errore e' un duplicato (409) chiede conferma con una notifica.
+   * Chiede cosa fare di un duplicato (409) con una notifica.
    * Restituisce 'force' per importare comunque, 'attach' (con l'id della scheda)
    * per aggiungere il file come altra lingua, altrimenti null (gestito).
+   * Nell'import di piu' file (`batch`) non si apre la scheda esistente e si puo' saltare
+   * il file ('skip') o tutti i duplicati successivi ('skipAll'); chiudere la domanda salta il file.
    */
   const askDuplicate = async (
     error: unknown,
-  ): Promise<{ action: 'force' } | { action: 'attach'; bookId: string; language: string } | null> => {
-    const body = error instanceof ApiError && error.status === 409 ? error.body : null;
-    const duplicate = (
-      body as {
-        duplicate?: {
-          reason: string;
-          book: BookSummary;
-          language?: string;
-          existingLanguages?: string[];
-        };
-      } | null
-    )?.duplicate;
+    batch?: { fileName: string },
+  ): Promise<DuplicateDecision | null> => {
+    const duplicate = duplicateOf(error);
     if (!duplicate) {
       toast((error as Error).message, 'error');
       return null;
     }
     const { book, reason } = duplicate;
     const authors = book.authors?.length ? ` di ${book.authors.join(', ')}` : '';
+    const prefix = batch ? `${batch.fileName}: ` : '';
+    const skipActions = batch
+      ? [
+          { label: 'Salta', value: 'skip' },
+          { label: 'Salta tutti i prossimi', value: 'skipAll' },
+        ]
+      : [{ label: 'Annulla', value: 'cancel' }];
 
     // Stessa opera in un'altra lingua: si puo' aggiungere come edizione.
     if (reason === 'language' && duplicate.language) {
       const existing = (duplicate.existingLanguages ?? []).map(languageLabel).join(', ');
       const language = languageLabel(duplicate.language);
       const answer = await confirm(
-        `«${book.title}»${authors} è già nella libreria (${existing}). Questo file è in ${language}: vuoi aggiungerlo come altra lingua?`,
+        `${prefix}«${book.title}»${authors} è già nella libreria (${existing}). Questo file è in ${language}: vuoi aggiungerlo come altra lingua?`,
         [
           { label: `Aggiungi come ${language}`, value: 'attach', primary: true },
           { label: 'Importa come libro separato', value: 'force' },
-          { label: 'Annulla', value: 'cancel' },
+          ...skipActions,
         ],
       );
       if (answer === 'attach') return { action: 'attach', bookId: book.id, language };
       if (answer === 'force') return { action: 'force' };
+      if (batch) return { action: answer === 'skipAll' ? 'skipAll' : 'skip' };
       return null;
     }
 
-    const reasons: Record<string, string> = {
-      file: 'stesso file',
-      isbn: 'stesso ISBN',
-      source: 'stessa fonte, stesso link',
-      title: 'stesso titolo e autore',
-    };
     const answer = await confirm(
-      `«${book.title}»${authors} è già nella libreria (${reasons[reason] ?? reason}${hiddenNote(book)}). Vuoi importarlo di nuovo?`,
+      `${prefix}«${book.title}»${authors} è già nella libreria (${DUPLICATE_REASONS[reason] ?? reason}${hiddenNote(book)}). Vuoi importarlo di nuovo?`,
       [
         { label: 'Importa comunque', value: 'force', primary: true },
-        { label: 'Apri esistente', value: 'open' },
-        { label: 'Annulla', value: 'cancel' },
+        ...(batch ? [] : [{ label: 'Apri esistente', value: 'open' }]),
+        ...skipActions,
       ],
     );
     if (answer === 'force') return { action: 'force' };
+    if (batch) return { action: answer === 'skipAll' ? 'skipAll' : 'skip' };
     if (answer === 'open') {
       onClose();
       await select(book.id);
@@ -198,6 +296,7 @@ export default function ImportDialog({ onClose }: Props) {
           setBusy(false);
           const decision = await askDuplicate(error);
           if (!decision) return;
+          if (decision.action !== 'force' && decision.action !== 'attach') return;
           options =
             decision.action === 'force' ? { force: true } : { attachTo: decision.bookId };
           attachedLanguage = decision.action === 'attach' ? decision.language : '';
@@ -232,6 +331,12 @@ export default function ImportDialog({ onClose }: Props) {
   ];
   const formatList = ['EPUB', 'PDF', 'DOCX', 'TXT', ...conversionLabels].join(' / ');
 
+  const extensionOf = (name: string) => {
+    const dot = name.lastIndexOf('.');
+    return dot >= 0 ? name.slice(dot).toLowerCase() : '';
+  };
+  const importableExtensions = [...BASE_EXTENSIONS, ...(conversion?.extensions ?? [])];
+
   const upload = async (file: File) => {
     // Se il limite del server e' noto, si evita di caricare un file che verrebbe rifiutato.
     if (settings?.maxUploadMb && file.size > settings.maxUploadMb * 1024 * 1024) {
@@ -239,14 +344,164 @@ export default function ImportDialog({ onClose }: Props) {
       return;
     }
     // Un formato da convertire puo' richiedere minuti: la risposta arriva a conversione finita.
-    const dot = file.name.lastIndexOf('.');
-    const ext = dot >= 0 ? file.name.slice(dot).toLowerCase() : '';
-    setConverting(Boolean(conversion?.extensions.includes(ext)));
+    setConverting(Boolean(conversion?.extensions.includes(extensionOf(file.name))));
     try {
       await runImport((options) => api.uploadFile(file, options));
     } finally {
       setConverting(false);
     }
+  };
+
+  /**
+   * Importa piu' file in coda, uno alla volta (le conversioni lato server sono in serie).
+   * Un file che fallisce non ferma la coda; la lista si ricarica e Apple Books si
+   * sincronizza una volta sola, alla fine.
+   */
+  const runQueue = async (picked: Candidate[]) => {
+    const result: QueueSummary = {
+      imported: 0,
+      attached: 0,
+      duplicates: [],
+      errors: [],
+      tooLarge: [],
+      ignored: 0,
+      notDone: 0,
+    };
+    const limit = settings?.maxUploadMb ? settings.maxUploadMb * 1024 * 1024 : 0;
+    const queue: Candidate[] = [];
+    for (const item of picked) {
+      if (isHiddenPath(item.path) || !importableExtensions.includes(extensionOf(item.file.name))) {
+        result.ignored += 1;
+      } else if (limit && item.file.size > limit) {
+        result.tooLarge.push({
+          name: item.path,
+          reason: `supera il limite di ${settings?.maxUploadMb} MB`,
+        });
+      } else {
+        queue.push(item);
+      }
+    }
+    setSummary(null);
+
+    // Un solo file: stesso flusso del file singolo, senza coda.
+    if (queue.length === 1 && result.tooLarge.length === 0 && result.ignored === 0) {
+      await upload(queue[0].file);
+      return;
+    }
+    if (queue.length === 0) {
+      setSummary(result);
+      return;
+    }
+
+    // Con piu' file, la scelta sui duplicati si fa una volta sola.
+    let policy: 'skip' | 'force' | 'ask' = 'skip';
+    if (queue.length > 1) {
+      const answer = await confirm(
+        `Importare ${queue.length} file. Se alcuni sono già nella libreria, cosa faccio?`,
+        [
+          { label: 'Salta i duplicati', value: 'skip', primary: true },
+          { label: 'Importa comunque i duplicati', value: 'force' },
+          { label: 'Chiedi ogni volta', value: 'ask' },
+          { label: 'Annulla', value: 'cancel' },
+        ],
+      );
+      if (answer !== 'skip' && answer !== 'force' && answer !== 'ask') return;
+      policy = answer;
+    }
+
+    stopRef.current = false;
+    let skipAll = false;
+    const importedBooks: BookMeta[] = [];
+    try {
+      for (let index = 0; index < queue.length; index += 1) {
+        if (stopRef.current) {
+          result.notDone = queue.length - index;
+          break;
+        }
+        const { file, path } = queue[index];
+        setProgress({
+          done: index,
+          total: queue.length,
+          name: path,
+          converting: Boolean(conversion?.extensions.includes(extensionOf(file.name))),
+        });
+        let options: { force?: boolean; attachTo?: string } = {};
+        let attached = false;
+        while (true) {
+          try {
+            importedBooks.push(await api.uploadFile(file, options));
+            result.imported += 1;
+            if (attached) result.attached += 1;
+            break;
+          } catch (error) {
+            const duplicate = duplicateOf(error);
+            // Un errore vero (formato rotto, DRM, conversione) o un duplicato anche con «importa comunque».
+            if (!duplicate || options.force || options.attachTo) {
+              result.errors.push({ name: path, reason: (error as Error).message });
+              break;
+            }
+            const why =
+              duplicate.reason === 'language'
+                ? `altra lingua di «${duplicate.book.title}»`
+                : `${DUPLICATE_REASONS[duplicate.reason] ?? duplicate.reason}: «${duplicate.book.title}»`;
+            let decision: DuplicateDecision | null = null;
+            if (skipAll || policy === 'skip') decision = { action: 'skip' };
+            else if (policy === 'force') decision = { action: 'force' };
+            else decision = await askDuplicate(error, { fileName: path });
+            if (decision?.action === 'skipAll') skipAll = true;
+            if (!decision || decision.action === 'skip' || decision.action === 'skipAll') {
+              result.duplicates.push({ name: path, reason: why });
+              break;
+            }
+            options =
+              decision.action === 'force' ? { force: true } : { attachTo: decision.bookId };
+            attached = decision.action === 'attach';
+          }
+        }
+      }
+    } finally {
+      setProgress(null);
+      setSummary(result);
+    }
+    if (importedBooks.length > 0) {
+      await load();
+      void syncAppleBooksFromApp(importedBooks.map((book) => book.id));
+      const notice = hiddenFanficNotice(importedBooks.map((book) => book.kind));
+      if (notice) toast(notice, 'info');
+    }
+  };
+
+  /** File scelti con gli input: la cartella porta con se' il percorso relativo. */
+  const pickFiles = (list: FileList | null) => {
+    if (!list || list.length === 0) return;
+    void runQueue(
+      Array.from(list).map((file) => ({ file, path: file.webkitRelativePath || file.name })),
+    );
+  };
+
+  /** File e cartelle trascinati: le cartelle si leggono in profondita'. */
+  const dropItems = async (data: DataTransfer) => {
+    // Le voci vanno prese subito: finito l'evento il DataTransfer si svuota.
+    const entries = Array.from(data.items ?? [])
+      .filter((item) => item.kind === 'file')
+      .map((item) => item.webkitGetAsEntry?.() ?? null);
+    const plain = Array.from(data.files ?? []);
+    const found: Candidate[] = [];
+    try {
+      if (entries.length > 0 && entries.every(Boolean)) {
+        for (const entry of entries) await collectEntry(entry as FileSystemEntry, found);
+      } else {
+        found.push(...plain.map((file) => ({ file, path: file.name })));
+      }
+    } catch (error) {
+      toast(`Non riesco a leggere la cartella: ${(error as Error).message}`, 'error');
+      return;
+    }
+    if (found.length === 0) {
+      toast('Nessun file da importare', 'info');
+      return;
+    }
+    await runQueue(found);
   };
 
   const importEfp = async () => {
@@ -353,11 +608,11 @@ export default function ImportDialog({ onClose }: Props) {
           onDrop={(event) => {
             event.preventDefault();
             setDragging(false);
-            const file = event.dataTransfer.files?.[0];
-            if (file) upload(file);
+            if (!queueRunning) void dropItems(event.dataTransfer);
           }}
           onClick={() => document.getElementById('import-file')?.click()}
           className={cn(
+            queueRunning && 'pointer-events-none opacity-50',
             'flex cursor-pointer flex-col items-center justify-center gap-2 rounded-xl border border-dashed px-4 py-8 text-center transition',
             dragging
               ? 'border-accent-500 bg-accent-500/10'
@@ -366,7 +621,7 @@ export default function ImportDialog({ onClose }: Props) {
         >
           <IconUpload className="h-6 w-6 text-ink-400" />
           <p className="text-sm text-ink-200">
-            Trascina qui un file {formatList}
+            Trascina qui file o cartelle {formatList}
           </p>
           <p className="text-[11px] text-ink-500">
             {converting
@@ -378,15 +633,102 @@ export default function ImportDialog({ onClose }: Props) {
           <input
             id="import-file"
             type="file"
-            accept={['.epub', '.pdf', '.docx', '.txt', '.md', '.rtf', ...(conversion?.extensions ?? [])].join(',')}
+            accept={importableExtensions.join(',')}
+            multiple
             hidden
             onChange={(event) => {
-              const file = event.target.files?.[0];
-              if (file) upload(file);
+              pickFiles(event.target.files);
               event.target.value = '';
             }}
           />
         </div>
+
+        {canPickFolder && (
+          <div className="mt-2 flex items-center gap-2">
+            <button
+              onClick={() => document.getElementById('import-folder')?.click()}
+              disabled={queueRunning || busy}
+              className="btn-ghost px-3 py-1.5 text-[12px]"
+            >
+              Scegli una cartella
+            </button>
+            <span className="text-[11px] text-ink-500">con le sottocartelle</span>
+            <input
+              id="import-folder"
+              type="file"
+              // @ts-expect-error webkitdirectory non e' nei tipi di React
+              webkitdirectory=""
+              multiple
+              hidden
+              onChange={(event) => {
+                pickFiles(event.target.files);
+                event.target.value = '';
+              }}
+            />
+          </div>
+        )}
+
+        {progress && (
+          <div className="mt-3 rounded-xl border border-black/[0.07] bg-ink-800 p-3" data-testid="import-progress">
+            <div className="mb-1 flex items-center justify-between gap-2">
+              <p className="min-w-0 truncate text-[12px] text-ink-200">
+                {Math.min(progress.done + 1, progress.total)} di {progress.total} · {progress.name}
+              </p>
+              <button
+                onClick={() => {
+                  stopRef.current = true;
+                }}
+                className="btn-ghost shrink-0 px-3 py-1 text-[12px]"
+              >
+                Interrompi
+              </button>
+            </div>
+            <div className="h-1.5 overflow-hidden rounded-full bg-black/[0.08]">
+              <div
+                className="h-full bg-accent-500 transition-all"
+                style={{ width: `${Math.round((progress.done / progress.total) * 100)}%` }}
+              />
+            </div>
+            {progress.converting && (
+              <p className="mt-1 text-[11px] text-ink-500">Conversione in corso… può richiedere qualche minuto</p>
+            )}
+          </div>
+        )}
+
+        {summary && !progress && (
+          <div className="mt-3 rounded-xl border border-black/[0.07] bg-ink-800 p-3" data-testid="import-summary">
+            <p className="text-[12px] font-medium text-ink-100">
+              Importati {summary.imported}
+              {summary.attached > 0 ? ` (di cui ${summary.attached} come altra lingua)` : ''} · Duplicati
+              saltati {summary.duplicates.length} · Errori {summary.errors.length} · Troppo grandi{' '}
+              {summary.tooLarge.length}
+            </p>
+            {(summary.notDone > 0 || summary.ignored > 0) && (
+              <p className="mt-0.5 text-[11px] text-ink-500">
+                {summary.notDone > 0 ? `Interrotto: ${summary.notDone} file non importati. ` : ''}
+                {summary.ignored > 0
+                  ? `${summary.ignored} file nascosti o di formato non importabile ignorati.`
+                  : ''}
+              </p>
+            )}
+            {summary.duplicates.length + summary.errors.length + summary.tooLarge.length > 0 && (
+              <details className="mt-1 text-[11px] text-ink-400">
+                <summary className="cursor-pointer">File saltati o falliti</summary>
+                <div className="mt-1 max-h-40 space-y-0.5 overflow-y-auto rounded-lg border border-black/[0.06] bg-white p-2">
+                  {[
+                    ...summary.errors.map((item) => ({ ...item, kind: 'Errore' })),
+                    ...summary.tooLarge.map((item) => ({ ...item, kind: 'Troppo grande' })),
+                    ...summary.duplicates.map((item) => ({ ...item, kind: 'Duplicato' })),
+                  ].map((item, i) => (
+                    <div key={i} className="break-words">
+                      <span className="text-ink-200">{item.kind}</span> {item.name}: {item.reason}
+                    </div>
+                  ))}
+                </div>
+              </details>
+            )}
+          </div>
+        )}
 
         <div className="mt-4 rounded-xl border border-accent-500/20 bg-accent-500/[0.04] p-3">
           <div className="mb-2 flex items-center justify-between gap-2">
