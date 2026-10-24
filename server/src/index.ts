@@ -11,6 +11,7 @@ import { registerApi } from './routes.js';
 import { loadSettings } from './store.js';
 import { scanLibrary } from './library.js';
 import { scheduleFanficChecks } from './fanficUpdates.js';
+import { startJellyfinSyncService } from './jellyfinSync.js';
 
 try {
   checkAuthConfig();
@@ -147,6 +148,9 @@ async function bootstrap(): Promise<void> {
 
   // Controllo notturno dei nuovi capitoli delle fanfiction (FANFIC_CHECK=off lo disattiva).
   scheduleFanficChecks(allLibraries);
+
+  // Invio dei metadati a Jellyfin (se configurato): modifiche delle schede e giro periodico.
+  startJellyfinSyncService();
 }
 
 bootstrap().catch((error) => {

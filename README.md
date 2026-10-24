@@ -21,6 +21,7 @@ Funziona in locale sul computer e si installa sul tuo server senza modifiche
 | **Fanfic** | Riconosce automaticamente il tipo di opera e ne estrae fandom, ship, personaggi, rating, stato, capitoli, parole, tag e serie dalle tabelle «Info» tipiche degli epub. Con il link AO3, la finestra **Serie** elenca anche le opere mancanti della serie. |
 | **EFP Fanfiction** | Incolla il link di una storia di `efpfanfic.net`: scarica tutti i capitoli e la importa come EPUB + ODT, con titolo, autore, fandom, tag, personaggi, rating, stato, capitoli e parole. Reimportare la stessa storia aggiorna la scheda esistente. |
 | **Nuovi capitoli** | Ogni notte l'app controlla su AO3 ed EFP se le fanfiction in corso hanno nuovi capitoli o sono state completate (anche a mano, da Impostazioni → Fanfiction). Avvisa soltanto: la card mostra «+N cap.» o «Completata», la sidebar il filtro «Aggiornamenti», e dalla scheda «Aggiorna storia» scarica di nuovo la storia (voto, stato di lettura e sottolineature restano; l'EPUB AO3 precedente va in `.backup/`). FanFiction.net è escluso. |
+| **Jellyfin** | Jellyfin legge la stessa cartella dei libri; l'app gli invia titolo, autori, descrizione, generi, tag, serie e copertina di ogni scheda e nasconde i file secondari. Vedi la sezione «Jellyfin». |
 | **Sottolineature Apple Books** | Importa evidenziazioni e note dal database locale di Libri (macOS), le abbina ai libri per titolo/autore e le mostra nella scheda **Sottolineature**, con ricerca ed export Markdown. |
 | **Lettore integrato** | Il pulsante **Leggi** nella scheda apre EPUB e PDF a tutto schermo, dal sito (anche su iPhone) e dall'app Mac. EPUB: pagine, indice, dimensione del testo e temi chiaro/seppia/scuro; PDF: zoom e salto a una pagina. La posizione si salva sul server e si riprende da qualunque dispositivo, e l'avanzamento aggiorna la barra nella scheda; con Apple Books vince l'aggiornamento più recente. Gli script contenuti negli EPUB non vengono mai eseguiti. |
 | **Copertine** | Estrazione automatica dall'epub, caricamento (drag & drop), download da URL, rimozione. |
@@ -186,6 +187,68 @@ l'account, le chiavi API (Google Books), Jellyfin e le altre impostazioni.
 Con Docker la cartella sull'host si sceglie con `LIBRARIES_PATH` nel `.env`
 (default `./librerie`, montata in `/app/libraries`); come le altre, deve
 appartenere all'uid 1000. Includila anche nel backup.
+
+### Jellyfin
+
+Jellyfin e books-editor condividono **una sola cartella**: Jellyfin legge
+direttamente le cartelle delle librerie (tutte, fanfiction comprese), books-editor
+e' l'unico a scrivere i file e **invia a Jellyfin i metadati arricchiti**. Non c'e'
+piu' un import da Jellyfin che copia i file.
+
+1. In Jellyfin crea (o punta) una libreria di tipo **Libri** sulla cartella che
+   contiene le librerie di books-editor (`LIBRARY_PATH` e `LIBRARIES_PATH`; con
+   Docker, i due volumi sull'host). Montala in **sola lettura** per Jellyfin e, nelle
+   opzioni della libreria, lascia spenti il salvataggio dei metadati e delle immagini
+   nelle cartelle dei media: scrive books-editor, non Jellyfin.
+2. In **Impostazioni → Jellyfin** inserisci indirizzo e chiave API (Jellyfin:
+   Dashboard → Chiavi API, con i permessi di amministratore), salva, poi scegli la
+   **Libreria Jellyfin dei libri**.
+3. Se Jellyfin vede la cartella con un percorso diverso da quello dell'app (sempre
+   cosi' con Docker), imposta `JELLYFIN_PATH_MAP`: coppie
+   `percorso visto da Jellyfin=percorso dell'app` separate da `;`, il prefisso piu'
+   lungo vince. Per esempio, con le cartelle sull'host in `/srv/books-editor`:
+
+   ```
+   JELLYFIN_PATH_MAP="/srv/books-editor/library=/app/library;/srv/books-editor/librerie=/app/libraries"
+   ```
+
+   Senza mappatura i percorsi devono coincidere. Gli elementi di Jellyfin che non
+   corrispondono a nessuna scheda (per esempio vecchi file fuori dalla cartella) si
+   vedono nell'elenco «Elementi Jellyfin senza scheda» delle Impostazioni.
+
+**Abbinamento.** Ogni elemento di Jellyfin ha il percorso del suo file: con la
+mappatura diventa il file di una scheda (principale o edizione in un'altra lingua),
+in qualunque libreria. L'id Jellyfin si salva nella scheda (`identifiers.jellyfin`,
+piu' id separati da virgola) con lo stato dell'ultimo invio (`jellyfinSync`).
+
+**Cosa si invia** (`GET /Items/{id}` per leggere l'elemento, poi `POST /Items/{id}`):
+titolo, descrizione in testo, autori
+(tipo `Author`), generi (quelli normalizzati dai tag), tag (per le fanfiction anche
+«Fanfiction» e il fandom), data di uscita, serie e numero del volume (solo numeri
+interi) e, con `POST /Items/{id}/Images/Primary`, la copertina, rimandata solo se
+cambia. Gli elementi vengono bloccati (`LockData`): «Aggiorna metadati» di Jellyfin non
+li sovrascrive. Un campo vuoto nella scheda lascia quello che Jellyfin ha gia'. Verso
+Jellyfin non si cancella mai nulla.
+
+**Quando.** Pochi secondi dopo ogni modifica di una scheda (modifica a mano, metadati
+online, copertina, import); per i libri nuovi, che Jellyfin vede solo dopo una sua
+scansione, qualche minuto dopo l'import l'app chiede a Jellyfin di aggiornare **solo**
+la libreria scelta (al massimo ogni 10 minuti, senza sostituire metadati) e poi
+riprova l'abbinamento; ogni `JELLYFIN_SYNC_MINUTES` minuti (default 30; `0` = spento)
+abbina i nuovi elementi e invia le schede modificate. **Impostazioni → Aggiorna
+Jellyfin ora** fa lo stesso subito su tutte le schede (**Reinvia tutto** anche sulle
+invariate); dalla scheda di un libro, **Invia a Jellyfin** lo fa per quel libro. Con
+«Invia automaticamente i metadati» spento l'invio parte solo a mano.
+
+**File secondari nascosti.** Jellyfin tratta come libri solo `.epub`, `.pdf`, `.mobi`,
+`.azw`, `.azw3` e i fumetti `.cbz`/`.cbr`/`.cb7`/`.cbt`: ODT, DOCX, TXT e simili non
+compaiono. Gli altri file che compaiono (l'originale MOBI/AZW3 di un libro convertito
+e i file extra) li nasconde un file `.ignore` che l'app scrive nella cartella del libro,
+con i soli nomi di quei file, e che aggiorna quando la scheda cambia (si cancella se
+non serve). Il file principale e i file delle altre lingue non sono mai esclusi: le
+edizioni in un'altra lingua restano visibili in Jellyfin, ciascuna col proprio
+titolo. Un `.ignore` scritto a mano (senza la riga «Generato da books-editor») non si
+tocca. Le cartelle `.backup/` sono nascoste da Jellyfin perche' iniziano con un punto.
 
 ---
 
@@ -475,6 +538,8 @@ l'app non vede l'IP reale ne' l'HTTPS.
 | `FANFIC_CHECK` | `on` | `off` disattiva il controllo automatico dei nuovi capitoli delle fanfiction AO3 ed EFP. Il controllo avvisa soltanto (etichetta sulla card, filtro «Aggiornamenti»); la storia si aggiorna dalla scheda. Il pulsante «Controlla aggiornamenti ora» nelle Impostazioni funziona comunque |
 | `FANFIC_CHECK_HOUR` | `3` | Ora locale (0-23) del controllo notturno. Nel container conta `TZ` (default `Europe/Rome` nel compose). Se l'ultimo giro risale a più di 24 ore fa, ne parte uno 10 minuti dopo l'avvio |
 | `FANFIC_CHECK_DELAY_SEC` | `6` | Pausa in secondi fra una richiesta e l'altra ai siti durante il controllo |
+| `JELLYFIN_PATH_MAP` | — | Mappatura `percorso visto da Jellyfin=percorso dell'app` (coppie separate da `;`, vince il prefisso più lungo) per abbinare i file di Jellyfin alle schede. Vuota = percorsi uguali |
+| `JELLYFIN_SYNC_MINUTES` | `30` | Ogni quanti minuti abbinare i nuovi elementi di Jellyfin e inviare le schede modificate (`0` = giro periodico spento) |
 | `LOG_LEVEL` | `info` | Livello di log |
 
 ### Google Books: errore HTTP 429
@@ -615,7 +680,7 @@ In **Impostazioni → Sottolineature da Apple Books → Importa da Apple Books**
 legge le annotazioni, le abbina ai libri per titolo e autore (oppure tramite
 l'identificatore Apple già salvato in `book.json`) e scrive il campo `highlights`.
 Lo stesso abbinamento avviene in automatico, limitato al libro appena importato,
-quando aggiungi un'opera (file, percorso sul server, EFP o Jellyfin): sottolineature,
+quando aggiungi un'opera (file, percorso sul server o EFP): sottolineature,
 note, avanzamento di lettura e data di fine compaiono senza altri passaggi. Se
 Apple Books non è disponibile l'import del libro riesce comunque.
 L'import è ripetibile e idempotente: usa gli UUID delle annotazioni, quindi non
@@ -737,6 +802,8 @@ books-editor/
 │       ├── appleBooksRead.ts # lettura dei database di Apple Books (senza libreria)
 │       ├── appleBooks.ts     # abbinamento e import di evidenziazioni e note
 │       ├── appleBooksWrite.ts # scrittura di titolo, autori e copertina su Apple Books
+│       ├── jellyfin.ts       # client dell'API di Jellyfin
+│       ├── jellyfinSync.ts   # abbinamento, invio dei metadati, file .ignore
 │       ├── routes.ts         # API REST
 │       ├── metadata/
 │       │   ├── epub.ts       # parser EPUB (OPF, copertina, testo)
@@ -797,6 +864,10 @@ Tutte le rotte sono sotto `/api`.
 | `POST` | `/efp/import` | Scarica una storia EFP e la importa (EPUB + ODT) |
 | `POST` | `/efp/download` | Scarica una storia EFP in ODT o EPUB |
 | `GET`/`PUT` | `/settings` | Impostazioni della libreria |
+| `GET` | `/jellyfin/info`, `/jellyfin/libraries` | Verifica la connessione a Jellyfin ed elenca le sue librerie |
+| `POST` | `/jellyfin/sync` | Abbina e invia a Jellyfin i metadati in background (body `{ "force": true }` per rimandare anche le schede invariate) |
+| `GET` | `/jellyfin/sync/status` | Stato e avanzamento dell'abbinamento e dell'invio |
+| `POST` | `/books/:id/jellyfin-push` | Invia subito a Jellyfin i metadati di una scheda |
 
 ---
 

@@ -267,6 +267,10 @@ export default function DetailPanel({
   const [downloadMenu, setDownloadMenu] = useState(false);
   const [appleStatus, setAppleStatus] = useState<AppleBooksWriteStatus | null>(null);
   const [appleDialog, setAppleDialog] = useState(false);
+  const [jellyfinBusy, setJellyfinBusy] = useState(false);
+  const jellyfinLinked = useStore((state) =>
+    Boolean(state.settings?.jellyfinUrl && state.settings.jellyfinApiKeySet && state.settings.jellyfinBooksLibraryId),
+  );
   const downloadMenuRef = useRef<HTMLDivElement>(null);
   // «Leggi»: menu delle lingue del lettore integrato.
   const [readMenu, setReadMenu] = useState(false);
@@ -614,6 +618,42 @@ export default function DetailPanel({
             <p className="mt-2 text-[11px] text-ink-500">
               Aggiunto il {formatDate(meta.dateAdded)} · modificato {relativeDate(meta.dateModified)}
             </p>
+            {jellyfinLinked && (
+              <p className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-ink-500" data-testid="jellyfin-row">
+                <span className={meta.jellyfinSync?.error ? 'text-rose-600/90' : undefined}>
+                  {meta.jellyfinSync?.error
+                    ? `Jellyfin: ${meta.jellyfinSync.error}`
+                    : !meta.jellyfinSync?.itemIds?.length
+                      ? 'Non ancora in Jellyfin'
+                      : meta.jellyfinSync.pushedAt
+                        ? `Jellyfin: inviato il ${formatDate(meta.jellyfinSync.pushedAt)}`
+                        : 'Jellyfin: abbinato, invio in attesa'}
+                </span>
+                <button
+                  onClick={async () => {
+                    setJellyfinBusy(true);
+                    const toast = useStore.getState().toast;
+                    try {
+                      const updated = await api.jellyfinPush(meta.id);
+                      useStore.setState({ detail: updated });
+                      await useStore.getState().reloadBook(meta.id);
+                      toast('Metadati inviati a Jellyfin', 'success');
+                    } catch (error) {
+                      toast((error as Error).message, 'error');
+                      await useStore.getState().reloadBook(meta.id);
+                    } finally {
+                      setJellyfinBusy(false);
+                    }
+                  }}
+                  disabled={jellyfinBusy}
+                  className="btn-ghost px-2 py-1 text-[11px] disabled:opacity-60"
+                  title="Invia subito a Jellyfin titolo, autori, descrizione, generi, tag, serie e copertina"
+                  data-testid="jellyfin-push"
+                >
+                  {jellyfinBusy ? 'Invio…' : 'Invia a Jellyfin'}
+                </button>
+              </p>
+            )}
             {files.length > 0 && (
               <div className="mt-2.5 flex flex-wrap gap-1.5">
                 {readableRows.length > 0 && (

@@ -7,6 +7,7 @@ import { desktop, importAppleBooksViaApp, setAppleAutoSync } from '../desktop';
 import { IconClose, IconFolder, IconLogout } from './icons';
 import FanficSettingsSection from './FanficSettingsSection';
 import Ao3AccountSection from './Ao3AccountSection';
+import JellyfinSyncSection from './JellyfinSyncSection';
 
 interface Props {
   onClose: () => void;
@@ -377,7 +378,7 @@ export default function SettingsDialog({ onClose }: Props) {
             <p className="mt-1.5 text-[11px] leading-relaxed text-ink-500">
               La chiave si crea in Jellyfin da Dashboard → Chiavi API. Viene salvata in{' '}
               <code className="font-mono">data/settings.json</code> e non viene mai mostrata al
-              browser. Serve per importare la libreria dei libri dalla finestra “Importa”.
+              browser. Serve per inviare a Jellyfin i metadati dei libri.
             </p>
             <div className="mt-2 flex flex-wrap items-center gap-3">
               <button
@@ -404,6 +405,8 @@ export default function SettingsDialog({ onClose }: Props) {
               </p>
             )}
           </div>
+
+          <JellyfinSyncSection />
 
           <Ao3AccountSection />
 

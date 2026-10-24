@@ -109,6 +109,19 @@ export const FANFIC_CHECK_DELAY_SEC = (() => {
   return process.env.FANFIC_CHECK_DELAY_SEC?.trim() && Number.isFinite(value) && value >= 0 ? value : 6;
 })();
 
+/**
+ * Mappatura dei percorsi fra Jellyfin e questo server: `percorso/visto/da/jellyfin=/app/library;altro=/app/libraries`.
+ * Serve ad abbinare i file di Jellyfin alle schede quando i due vedono la cartella con percorsi diversi.
+ * Vuota = i percorsi coincidono.
+ */
+export const JELLYFIN_PATH_MAP = process.env.JELLYFIN_PATH_MAP?.trim() ?? '';
+/** Ogni quanti minuti abbinare i nuovi elementi di Jellyfin e inviare le schede modificate (0 = spento). */
+export const JELLYFIN_SYNC_MINUTES = (() => {
+  const raw = process.env.JELLYFIN_SYNC_MINUTES?.trim();
+  const value = Number(raw);
+  return raw && Number.isFinite(value) && value >= 0 ? value : 30;
+})();
+
 export const WEB_DIST = path.join(PROJECT_ROOT, 'web', 'dist');
 
 export function ensureDir(dir: string): string {

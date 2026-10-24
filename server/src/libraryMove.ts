@@ -4,6 +4,7 @@ import fsp from 'node:fs/promises';
 import path from 'node:path';
 import { LibraryError, currentLibrary, getLibrary } from './libraries.js';
 import { loadIndex, loadIndexFor, saveIndex, saveIndexFor } from './store.js';
+import { notifyBook } from './bookEvents.js';
 import { BOOK_JSON, emptyMeta, getBookRecord, readBookJson, uniqueFolderName, writeBookJsonPublic } from './library.js';
 import type { BookMeta } from '../../shared/types.js';
 
@@ -142,6 +143,8 @@ export async function moveBookToLibrary(bookId: string, toId: string): Promise<{
     await saveIndexFor(target, [...targetIndex.filter((book) => book.id !== meta.id && book.folder !== folderName), meta]);
     const sourceIndex = await loadIndex();
     await saveIndex(sourceIndex.filter((book) => book.id !== bookId));
+    // Per Jellyfin e' un file nuovo, in un'altra cartella.
+    notifyBook(target, meta.id, 'new');
     return { to: target.id, book: meta };
   } finally {
     moving.delete(bookId);

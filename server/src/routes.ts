@@ -29,6 +29,7 @@ import {
   visibleBooks,
 } from './libraries.js';
 import { moveBookToLibrary } from './libraryMove.js';
+import { notifyBook } from './bookEvents.js';
 import { conversionSupport } from './convert.js';
 import { loadIndex, loadSettings, saveIndex, saveSettings, toSummary } from './store.js';
 import {
@@ -72,13 +73,8 @@ import {
   startFanficCheck,
   updateFanficStory,
 } from './fanficUpdates.js';
-import {
-  getJellyfinImportState,
-  getJellyfinInfo,
-  listJellyfinLibraries,
-  previewJellyfinImport,
-  startJellyfinImport,
-} from './jellyfin.js';
+import { getJellyfinInfo, listJellyfinLibraries } from './jellyfin.js';
+import { getJellyfinSyncState, pushBookNow, startJellyfinSync } from './jellyfinSync.js';
 import type { DuplicateMatch, PreparedImport } from './library.js';
 import { HIGHLIGHT_COLORS, READING_STATUSES } from '../../shared/types.js';
 import type { AppSettings, BookHighlight, BookMeta, HighlightColor, MetadataCandidate, ReadingStatus } from '../../shared/types.js';
@@ -360,6 +356,12 @@ export async function registerApi(app: FastifyInstance): Promise<void> {
     } else {
       delete patch.jellyfinUrl;
     }
+    if (typeof patch.jellyfinBooksLibraryId === 'string') {
+      patch.jellyfinBooksLibraryId = patch.jellyfinBooksLibraryId.trim();
+    } else {
+      delete patch.jellyfinBooksLibraryId;
+    }
+    if (typeof patch.jellyfinPushEnabled !== 'boolean') delete patch.jellyfinPushEnabled;
     if (typeof patch.googleBooksApiKey === 'string') {
       patch.googleBooksApiKey = patch.googleBooksApiKey.trim();
     } else {
@@ -434,30 +436,26 @@ export async function registerApi(app: FastifyInstance): Promise<void> {
     }
   });
 
-  app.post<{ Body: { libraryId?: string } }>('/api/jellyfin/preview', async (request, reply) => {
-    const libraryId = request.body?.libraryId?.trim();
-    if (!libraryId) return reply.code(400).send({ error: 'Libreria Jellyfin non indicata' });
+  /** Stato dell'abbinamento e dell'invio dei metadati a Jellyfin. */
+  app.get('/api/jellyfin/sync/status', async () => getJellyfinSyncState());
+
+  /** «Aggiorna Jellyfin ora»: abbina e invia in background (`force` rimanda anche le schede invariate). */
+  app.post<{ Body: { force?: boolean } | undefined }>('/api/jellyfin/sync', async (request, reply) => {
     try {
-      return await previewJellyfinImport(libraryId);
+      return await startJellyfinSync({ force: request.body?.force === true });
+    } catch (error) {
+      return reply.code((error as Error).message.includes('in corso') ? 409 : 400).send({ error: (error as Error).message });
+    }
+  });
+
+  /** Invia subito a Jellyfin i metadati di una scheda. */
+  app.post<{ Params: { id: string } }>('/api/books/:id/jellyfin-push', async (request, reply) => {
+    try {
+      return await pushBookNow(request.params.id);
     } catch (error) {
       return reply.code(400).send({ error: (error as Error).message });
     }
   });
-
-  app.post<{ Body: { libraryId?: string } }>('/api/jellyfin/import', async (request, reply) => {
-    const libraryId = request.body?.libraryId?.trim();
-    if (!libraryId) return reply.code(400).send({ error: 'Libreria Jellyfin non indicata' });
-    if (getJellyfinImportState()?.running) {
-      return reply.code(409).send({ error: 'Un import da Jellyfin e\' gia\' in corso' });
-    }
-    try {
-      return await startJellyfinImport(libraryId);
-    } catch (error) {
-      return reply.code(400).send({ error: (error as Error).message });
-    }
-  });
-
-  app.get('/api/jellyfin/import', async () => getJellyfinImportState());
 
   /* ------------------------------------------------------------- libri -- */
   app.get('/api/books', async () => {
@@ -1424,6 +1422,7 @@ export async function registerApi(app: FastifyInstance): Promise<void> {
 
       const index = await loadIndex();
       await saveIndex([...index.filter((b) => b.folder !== meta.folder), meta]);
+      notifyBook(currentLibrary(), meta.id, 'new');
       await syncAppleBooksForBooks([meta.id]);
       return (await getBookMeta(meta.id)) ?? meta;
     },

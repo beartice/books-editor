@@ -58,6 +58,12 @@ services:
       FANFIC_CHECK: ${FANFIC_CHECK:-on}
       FANFIC_CHECK_HOUR: ${FANFIC_CHECK_HOUR:-3}
       FANFIC_CHECK_DELAY_SEC: ${FANFIC_CHECK_DELAY_SEC:-6}
+      # Jellyfin legge la cartella delle librerie: serve a abbinare i suoi file alle
+      # schede quando vede la cartella con un percorso diverso da quello del container
+      # (vedi .env.example). Vuota = percorsi uguali. SYNC_MINUTES: ogni quanti minuti
+      # abbina i nuovi elementi e invia le schede modificate (0 = giro periodico spento).
+      JELLYFIN_PATH_MAP: ${JELLYFIN_PATH_MAP:-}
+      JELLYFIN_SYNC_MINUTES: ${JELLYFIN_SYNC_MINUTES:-30}
     volumes:
       # La libreria (epub, copertine, book.json) vive qui. LIBRARY_PATH la
       # sposta, ad esempio su un disco dedicato.

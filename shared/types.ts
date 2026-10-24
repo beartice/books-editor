@@ -61,6 +61,72 @@ export function isFanficUpdateAvailable(update: FanficUpdate | null | undefined)
   return update.remoteChapters !== (update.dismissedChapters ?? undefined);
 }
 
+/** Stato dell'invio dei metadati di una scheda a Jellyfin. Gestito solo dal server. */
+export interface JellyfinSyncInfo {
+  /** Elementi Jellyfin abbinati alla scheda (file principale ed edizioni). */
+  itemIds: string[];
+  /** Ultimo invio riuscito (ISO 8601), null se mai inviata. */
+  pushedAt: string | null;
+  /** Impronta della copertina inviata: la copertina non si rimanda se non cambia. */
+  coverHash: string | null;
+  /** Impronta dei metadati inviati: se non cambia non si rimanda nulla. */
+  payloadHash?: string | null;
+  /** Ultima verifica (anche senza invio, perche' nulla era cambiato). */
+  checkedAt?: string | null;
+  /** Motivo dell'ultimo invio fallito, null se andato a buon fine. */
+  error: string | null;
+}
+
+/** Elemento di Jellyfin che non corrisponde a nessuna scheda. */
+export interface JellyfinUnmatchedItem {
+  id: string;
+  name: string;
+  /** Percorso come lo vede Jellyfin. */
+  path: string;
+  /** Perche' non e' abbinato. */
+  reason: 'unknown' | 'unmapped';
+}
+
+/** Stato della sincronizzazione con Jellyfin (abbinamento e invio dei metadati). */
+export interface JellyfinSyncState {
+  /** Indirizzo, chiave e libreria Jellyfin dei libri sono impostati. */
+  configured: boolean;
+  /** Invio automatico attivo. */
+  pushEnabled: boolean;
+  /** Mappatura dei percorsi (JELLYFIN_PATH_MAP) presente. */
+  pathMapSet: boolean;
+  running: boolean;
+  /** Fase del giro in corso. */
+  phase: 'ignore' | 'match' | 'push' | null;
+  done: number;
+  total: number;
+  /** Schede inviate, saltate perche' invariate, fallite nel giro (in corso o ultimo). */
+  pushed: number;
+  skipped: number;
+  errors: number;
+  startedAt: string | null;
+  finishedAt: string | null;
+  /** Ultimo giro che ha toccato Jellyfin (inizio dell'ultimo abbinamento). */
+  matchedAt: string | null;
+  /** Schede con almeno un elemento Jellyfin. */
+  matchedBooks: number;
+  /** Schede abbinate il cui ultimo invio e' fallito. */
+  booksWithError: number;
+  /** Elementi Jellyfin letti nell'ultimo abbinamento. */
+  jellyfinItems: number;
+  /** Elementi di file secondari (originali, extra) senza scheda propria. */
+  secondaryItems: number;
+  unmatchedCount: number;
+  /** Primi elementi senza scheda (al massimo 200). */
+  unmatched: JellyfinUnmatchedItem[];
+  /** Ultimo invio riuscito a Jellyfin (qualunque scheda). */
+  lastPushAt: string | null;
+  /** Ultima richiesta di aggiornamento della libreria a Jellyfin. */
+  lastScanAt: string | null;
+  /** Errore generale dell'ultimo giro (Jellyfin irraggiungibile, libreria mancante...). */
+  error: string | null;
+}
+
 /** Sessione AO3 dell'utente (il server conserva solo i cookie, mai la password). */
 export interface Ao3SessionState {
   loggedIn: boolean;
@@ -153,6 +219,8 @@ export interface BookMeta {
   efpUrl: string;
   /** Esito dell'ultimo controllo dei nuovi capitoli sul sito. Gestito solo dal server. */
   fanficUpdate?: FanficUpdate | null;
+  /** Invio dei metadati a Jellyfin. Gestito solo dal server. */
+  jellyfinSync?: JellyfinSyncInfo | null;
 
   /* --- campi personali --- */
   notes: string;
@@ -458,6 +526,10 @@ export interface AppSettings {
   jellyfinApiKey?: string;
   /** Sola lettura: true se una chiave Jellyfin e' configurata. */
   jellyfinApiKeySet?: boolean;
+  /** Libreria Jellyfin (di tipo libri) che legge la cartella delle librerie. */
+  jellyfinBooksLibraryId?: string;
+  /** Invia da solo a Jellyfin i metadati modificati (default: si, con la libreria impostata). */
+  jellyfinPushEnabled?: boolean;
   /** Theme: 'dark' | 'light' | 'system'. */
   theme: 'dark' | 'light' | 'system';
   /** Numeri di parole per ora di lettura (per la stima del tempo). */

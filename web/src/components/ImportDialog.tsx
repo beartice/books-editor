@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { api, ApiError, tooLargeMessage } from '../api';
-import type { EfpImportResult, JellyfinImportState, JellyfinLibrary, JellyfinPreview } from '../api';
+import type { EfpImportResult } from '../api';
 import type { BookMeta, BookSummary, ConversionSupport } from '@shared/types';
 import { syncAppleBooksFromApp } from '../desktop';
 import { hideFanficsOf, libraryNameOf, useStore } from '../store';
@@ -136,87 +136,14 @@ export default function ImportDialog({ onClose }: Props) {
       ? `Fanfiction importata: in «${libraryName}» le fanfiction sono nascoste (Impostazioni → Mostra le fanfiction)`
       : null;
 
-  // Jellyfin: librerie, analisi e job di import in background.
-  const jellyfinReady = Boolean(settings?.jellyfinUrl && settings?.jellyfinApiKeySet);
-  const [jfLibraries, setJfLibraries] = useState<JellyfinLibrary[]>([]);
-  const [jfLibraryId, setJfLibraryId] = useState('');
-  const [jfPreview, setJfPreview] = useState<JellyfinPreview | null>(null);
-  const [jfBusy, setJfBusy] = useState<'libraries' | 'preview' | null>(null);
-  const [jfJob, setJfJob] = useState<JellyfinImportState | null>(null);
+  // Jellyfin legge direttamente la cartella delle librerie: nessun import, solo una nota.
+  const jellyfinLinked = Boolean(
+    settings?.jellyfinUrl && settings?.jellyfinApiKeySet && settings?.jellyfinBooksLibraryId,
+  );
 
   useEffect(() => {
     api.conversion().then(setConversion).catch(() => undefined);
   }, []);
-
-  // Carica le librerie Jellyfin e recupera un eventuale job ancora in corso.
-  useEffect(() => {
-    if (!jellyfinReady) return;
-    setJfBusy('libraries');
-    api
-      .jellyfinLibraries()
-      .then((libraries) => {
-        setJfLibraries(libraries);
-        setJfLibraryId((current) => current || libraries[0]?.id || '');
-      })
-      .catch((error) => toast((error as Error).message, 'error'))
-      .finally(() => setJfBusy(null));
-    api
-      .jellyfinImportState()
-      .then((state) => {
-        if (state?.running) setJfJob(state);
-      })
-      .catch(() => undefined);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [jellyfinReady]);
-
-  // Finche' il job gira, ne interroga lo stato ogni 1,5 secondi.
-  const jfRunning = jfJob?.running ?? false;
-  useEffect(() => {
-    if (!jfRunning) return;
-    const timer = setInterval(() => {
-      api
-        .jellyfinImportState()
-        .then(async (state) => {
-          if (!state) return;
-          setJfJob(state);
-          if (state.running) return;
-          await load();
-          void syncAppleBooksFromApp(state.imported.map((item) => item.id));
-          const notice = hiddenFanficNotice(state.imported.map((item) => item.kind));
-          if (notice) toast(notice, 'info');
-          toast(
-            `Importati ${state.imported.length}, aggiunte come altra lingua ${state.editions?.length ?? 0}, duplicati scartati ${state.duplicates.length}, errori ${state.errors.length}`,
-            state.errors.length ? 'error' : 'success',
-          );
-          setJfPreview(null);
-        })
-        .catch(() => undefined);
-    }, 1500);
-    return () => clearInterval(timer);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [jfRunning]);
-
-  const analyzeJellyfin = async () => {
-    if (!jfLibraryId) return;
-    setJfBusy('preview');
-    setJfPreview(null);
-    try {
-      setJfPreview(await api.jellyfinPreview(jfLibraryId));
-    } catch (error) {
-      toast((error as Error).message, 'error');
-    } finally {
-      setJfBusy(null);
-    }
-  };
-
-  const startJellyfin = async () => {
-    if (!jfLibraryId) return;
-    try {
-      setJfJob(await api.jellyfinImport(jfLibraryId));
-    } catch (error) {
-      toast((error as Error).message, 'error');
-    }
-  };
 
   /**
    * Chiede cosa fare di un duplicato (409) con una notifica.
@@ -768,123 +695,15 @@ export default function ImportDialog({ onClose }: Props) {
           </p>
         </div>
 
-        <div className="mt-4 rounded-xl border border-accent-500/20 bg-accent-500/[0.04] p-3">
-          <div className="mb-2 flex items-center justify-between gap-2">
-            <span className="text-[11px] font-semibold uppercase tracking-wider text-ink-300">
-              Da Jellyfin
-            </span>
-            <span className="rounded-full bg-accent-500/10 px-2 py-0.5 text-[10px] font-medium text-accent-500">
-              senza duplicati
-            </span>
-          </div>
-          {!jellyfinReady ? (
-            <p className="text-[11px] text-ink-500">
-              Indirizzo o chiave API di Jellyfin mancanti: configurali nelle Impostazioni.
-            </p>
-          ) : (
-            <>
-              <div className="flex gap-2">
-                <select
-                  value={jfLibraryId}
-                  onChange={(event) => {
-                    setJfLibraryId(event.target.value);
-                    setJfPreview(null);
-                  }}
-                  disabled={jfBusy !== null || jfRunning}
-                  className="field-input text-[12px]"
-                >
-                  {jfLibraries.map((library) => (
-                    <option key={library.id} value={library.id}>
-                      {library.name}
-                      {library.type === 'books' ? '' : ` (${library.type || 'altro'})`}
-                    </option>
-                  ))}
-                </select>
-                <button
-                  onClick={analyzeJellyfin}
-                  disabled={jfBusy !== null || jfRunning || !jfLibraryId}
-                  className="btn-ghost px-3 py-1.5 text-[12px]"
-                >
-                  {jfBusy === 'preview' ? 'Analizzo…' : 'Analizza'}
-                </button>
-              </div>
-
-              {jfPreview && !jfRunning && (
-                <div className="mt-2">
-                  <p className="text-[12px] text-ink-200">
-                    {jfPreview.counts.new} nuovi
-                    {jfPreview.counts.uncertain > 0
-                      ? ` (${jfPreview.counts.uncertain} da verificare dopo il download)`
-                      : ''}{' '}
-                    · {jfPreview.counts.duplicate} già presenti ·{' '}
-                    {jfPreview.counts.unsupported} formati non supportati ·{' '}
-                    {jfPreview.counts.imported} già importati
-                  </p>
-                  {(jfPreview.counts.new > 0 || jfPreview.counts.duplicate > 0) && (
-                    <details className="mt-1 text-[11px] text-ink-400">
-                      <summary className="cursor-pointer">Elenco</summary>
-                      <div className="mt-1 max-h-40 space-y-0.5 overflow-y-auto rounded-lg border border-black/[0.06] bg-ink-800 p-2">
-                        {jfPreview.items
-                          .filter((item) => item.status === 'new' || item.status === 'duplicate')
-                          .map((item) => (
-                            <div key={item.id} className="truncate">
-                              <span className="text-ink-200">
-                                {item.status === 'new' ? 'Nuovo' : 'Duplicato'}
-                              </span>{' '}
-                              {item.title}
-                              {item.authors.length ? ` · ${item.authors.join(', ')}` : ''}
-                              {item.status === 'duplicate'
-                                ? item.reason === 'jellyfin-copy'
-                                  ? ' (copia nella libreria Jellyfin)'
-                                  : item.existing
-                                    ? ` (già in libreria: «${item.existing.title}»)`
-                                    : ''
-                                : ''}
-                              {item.status === 'new' && item.uncertain ? ' (da verificare)' : ''}
-                            </div>
-                          ))}
-                      </div>
-                    </details>
-                  )}
-                  <button
-                    onClick={startJellyfin}
-                    disabled={jfPreview.counts.new === 0}
-                    className="btn-primary mt-2 px-3 py-1.5 text-[12px]"
-                  >
-                    Importa {jfPreview.counts.new} libri
-                  </button>
-                </div>
-              )}
-
-              {jfJob && (
-                <div className="mt-2">
-                  <div className="h-1.5 overflow-hidden rounded-full bg-black/[0.08]">
-                    <div
-                      className="h-full bg-accent-500 transition-all"
-                      style={{
-                        width: `${jfJob.total ? Math.round((jfJob.done / jfJob.total) * 100) : 100}%`,
-                      }}
-                    />
-                  </div>
-                  <p className="mt-1 text-[11px] text-ink-400">
-                    {jfJob.running ? 'Importo… ' : 'Terminato · '}
-                    {jfJob.done}/{jfJob.total} · importati {jfJob.imported.length} · aggiunte come
-                    altra lingua: {jfJob.editions?.length ?? 0} · duplicati scartati {jfJob.duplicates.length} · errori {jfJob.errors.length}
-                  </p>
-                  {jfJob.errors.length > 0 && (
-                    <div className="mt-1 max-h-32 space-y-0.5 overflow-y-auto text-[11px] text-rose-600/90">
-                      {jfJob.errors.map((item, i) => (
-                        <div key={i}>
-                          {item.title}: {item.message}
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              )}
-            </>
-          )}
-        </div>
+        {jellyfinLinked && (
+          <p
+            className="mt-4 rounded-xl border border-accent-500/20 bg-accent-500/[0.04] p-3 text-[11px] leading-relaxed text-ink-400"
+            data-testid="jellyfin-note"
+          >
+            Jellyfin legge direttamente questa libreria: i libri importati qui compaiono anche in
+            Jellyfin.
+          </p>
+        )}
 
         <div className="my-4 flex items-center gap-3 text-[11px] uppercase tracking-wider text-ink-500">
           <span className="h-px flex-1 bg-black/[0.07]" />

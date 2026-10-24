@@ -13,6 +13,7 @@ import {
 } from './metadata/fanfic.js';
 import { loadIndex, loadSettings, saveIndex, toSummary } from './store.js';
 import { currentLibrary, visibleBooks } from './libraries.js';
+import { notifyBook } from './bookEvents.js';
 import { htmlToText } from './htmlText.js';
 import { detectLanguage, toIso6391 } from './language.js';
 import { normalizeTags } from './tags.js';
@@ -364,6 +365,7 @@ export async function scanLibrary(): Promise<ScanResult> {
         meta.coverFile = cover;
         await writeBookJson(folderPath, meta);
         result.added += 1;
+        notifyBook(currentLibrary(), meta.id, 'new');
         if (settings.autoLookup) {
           const filled = await autoFillFromOnline(meta);
           meta = filled;
@@ -942,6 +944,7 @@ export async function importFile(
   const index = await loadIndex();
   const others = index.filter((book) => book.folder !== meta.folder);
   await saveIndex([...others, meta]);
+  notifyBook(currentLibrary(), meta.id, 'new');
 
   if (settings.autoLookup) {
     await autoFillFromOnline(meta);
@@ -992,6 +995,8 @@ export async function updateBook(
 
   index[position] = next;
   await saveIndex(index);
+  // Con `touch: false` (posizione di lettura) non cambia nulla che Jellyfin debba sapere.
+  if (options.touch !== false) notifyBook(currentLibrary(), next.id, 'changed');
   return next;
 }
 
@@ -1448,6 +1453,7 @@ export async function mergeBooks(targetId: string, otherId: string): Promise<Mer
 
   await writeBookJson(targetPath, merged);
   await saveIndex(index.filter((book) => book.id !== otherId).map((b) => (b.id === targetId ? merged : b)));
+  notifyBook(currentLibrary(), targetId, 'changed');
 
   // 4) Pulizia: la cartella dell'altra scheda va solo se non contiene altro che
   //    book.json, copertine e una .backup vuota.

@@ -11,6 +11,8 @@ import {
   writeBookJsonPublic,
 } from './library.js';
 import { loadIndex, loadSettings, saveIndex } from './store.js';
+import { notifyBook } from './bookEvents.js';
+import { currentLibrary } from './libraries.js';
 import { normalizeTags } from './tags.js';
 import type { BookMeta } from '../../shared/types.js';
 import type { DuplicateMatch } from './library.js';
@@ -1239,6 +1241,7 @@ export async function importEfpStory(
   await writeBookJsonPublic(folderPath, meta);
   index.push(meta);
   await saveIndex(index);
+  notifyBook(currentLibrary(), meta.id, 'new');
   return { book: meta, story, created: true };
 }
 

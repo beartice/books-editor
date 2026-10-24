@@ -11,6 +11,7 @@ import type {
   BookSummary,
   ConversionSupport,
   FanficCheckState,
+  JellyfinSyncState,
   HighlightColor,
   LibraryStats,
   ReadingStats,
@@ -156,40 +157,6 @@ export interface JellyfinLibrary {
   id: string;
   name: string;
   type: string;
-}
-
-export type JellyfinStatus = 'new' | 'duplicate' | 'imported' | 'unsupported';
-
-export interface JellyfinPreviewItem {
-  id: string;
-  title: string;
-  authors: string[];
-  format: string;
-  status: JellyfinStatus;
-  existing?: { id: string; title: string };
-  reason?: 'library' | 'jellyfin-copy';
-  uncertain?: boolean;
-}
-
-export interface JellyfinPreview {
-  total: number;
-  counts: Record<JellyfinStatus, number> & { uncertain: number };
-  items: JellyfinPreviewItem[];
-}
-
-export interface JellyfinImportState {
-  running: boolean;
-  libraryId: string;
-  total: number;
-  done: number;
-  imported: Array<{ id: string; title: string; kind?: 'book' | 'fanfic' }>;
-  duplicates: Array<{ title: string; existing: string }>;
-  /** File aggiunti come altra lingua di un libro gia' presente. */
-  editions: Array<{ title: string; book: string; language: string }>;
-  skipped: number;
-  errors: Array<{ title: string; message: string }>;
-  startedAt: string;
-  finishedAt: string | null;
 }
 
 export interface AuthStatus {
@@ -424,17 +391,10 @@ export const api = {
     }),
   jellyfinInfo: () => request<JellyfinInfo>('/jellyfin/info'),
   jellyfinLibraries: () => request<JellyfinLibrary[]>('/jellyfin/libraries'),
-  jellyfinPreview: (libraryId: string) =>
-    request<JellyfinPreview>('/jellyfin/preview', {
-      method: 'POST',
-      body: JSON.stringify({ libraryId }),
-    }),
-  jellyfinImport: (libraryId: string) =>
-    request<JellyfinImportState>('/jellyfin/import', {
-      method: 'POST',
-      body: JSON.stringify({ libraryId }),
-    }),
-  jellyfinImportState: () => request<JellyfinImportState | null>('/jellyfin/import'),
+  jellyfinSyncState: () => request<JellyfinSyncState>('/jellyfin/sync/status'),
+  jellyfinSync: (force = false) =>
+    request<JellyfinSyncState>('/jellyfin/sync', { method: 'POST', body: JSON.stringify({ force }) }),
+  jellyfinPush: (id: string) => request<BookMeta>(`/books/${id}/jellyfin-push`, { method: 'POST' }),
   folders: () => request<string[]>('/library/folders'),
   ao3Session: () => request<Ao3SessionState>('/ao3/session'),
   ao3Login: (username: string, password: string) =>
