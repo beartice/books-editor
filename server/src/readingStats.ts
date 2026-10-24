@@ -1,4 +1,5 @@
 import { bookGenres } from '../../shared/genres.js';
+import { localDayOf, type ReadingLog } from './readingLog.js';
 import type {
   BookMeta,
   KindSplit,
@@ -124,6 +125,7 @@ export function computeReadingStats(
   year: number | 'all',
   wordsPerMinute: number,
   now = new Date(),
+  log: ReadingLog = { version: 1, days: {} },
 ): ReadingStats {
   const today = localDay(now);
   const window = windowFor(year, today);
@@ -227,7 +229,8 @@ export function computeReadingStats(
   const perBook = new Map<string, { id: string; title: string; count: number }>();
   for (const book of books) {
     for (const highlight of book.highlights ?? []) {
-      const day = dayOf(highlight.createdAt);
+      // Giorno nel fuso del server, come il registro delle giornate di lettura.
+      const day = localDayOf(highlight.createdAt);
       if (inWindow(day)) highlightsByDay[day] = (highlightsByDay[day] ?? 0) + 1;
       // Con un anno contano solo quelle fatte nell'anno; con `all` tutte, anche senza data.
       if (year !== 'all' && !(day && day.startsWith(`${year}-`))) continue;
@@ -236,6 +239,31 @@ export function computeReadingStats(
       perBook.set(book.id, entry);
     }
   }
+
+  // Giornate di lettura: registro (solo libri visibili) piu' i giorni delle sottolineature.
+  const titles = new Map(books.map((book) => [book.id, book.title || 'Senza titolo']));
+  const readingDays: ReadingStats['readingDays'] = {};
+  const dayEntry = (day: string) => (readingDays[day] ??= { books: [], highlights: 0 });
+  const addBook = (day: string, id: string) => {
+    const entry = dayEntry(day);
+    if (!entry.books.some((item) => item.id === id)) entry.books.push({ id, title: titles.get(id) ?? '' });
+  };
+  for (const [day, logged] of Object.entries(log.days)) {
+    if (!inWindow(day) || day > today) continue;
+    for (const id of Object.keys(logged)) if (titles.has(id)) addBook(day, id);
+  }
+  for (const book of books) {
+    for (const highlight of book.highlights ?? []) {
+      const day = localDayOf(highlight.createdAt);
+      if (inWindow(day)) addBook(day, book.id);
+    }
+  }
+  for (const [day, count] of Object.entries(highlightsByDay)) dayEntry(day).highlights = count;
+  for (const [day, entry] of Object.entries(readingDays)) {
+    if (!entry.books.length && !entry.highlights) delete readingDays[day];
+    else entry.books.sort((a, b) => a.title.localeCompare(b.title, 'it'));
+  }
+
   const months = monthsBetween(window.from, window.to);
   const monthStats = new Map<string, { count: number; days: number }>(
     months.map((month) => [month, { count: 0, days: 0 }]),
@@ -332,6 +360,8 @@ export function computeReadingStats(
       longest,
     },
     highlightsByDay,
+    readingDays,
+    readingDaysCount: Object.keys(readingDays).length,
     highlightsByMonth,
     highlightsTotal,
     highlightsDays: Object.keys(highlightsByDay).length,

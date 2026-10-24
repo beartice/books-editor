@@ -290,21 +290,22 @@ function TimelineRow({
 
 function HeatCard({ stats, selected }: { stats: ReadingStats; selected: number | 'all' }) {
   const title = selected === 'all' ? 'Giornate di lettura negli ultimi 12 mesi' : `Giornate di lettura nel ${selected}`;
+  const has = stats.readingDaysCount > 0;
   return (
     <div className={`${CARD} flex flex-col gap-3.5`}>
       <CardTitle
         title={title}
         note={
-          stats.highlightsTotal
-            ? `Ogni quadrato è un giorno: più è scuro, più sottolineature hai fatto · ${plural(stats.highlightsTotal, 'sottolineatura', 'sottolineature')} in ${plural(stats.highlightsDays, 'giorno', 'giorni')}`
+          has
+            ? `${plural(stats.readingDaysCount, 'giornata di lettura', 'giornate di lettura')} · ${plural(stats.highlightsTotal, 'sottolineatura', 'sottolineature')}`
             : undefined
         }
-        right={stats.highlightsTotal ? <div className="max-sm:hidden"><HeatLegend /></div> : undefined}
+        right={has ? <div className="max-sm:hidden"><HeatLegend /></div> : undefined}
       />
-      {stats.highlightsTotal === 0 ? (
+      {!has ? (
         <EmptyNote>
-          Nessuna sottolineatura in questo periodo: il calendario si riempie con quelle fatte in Apple Books e nel
-          lettore.
+          Nessuna giornata di lettura in questo periodo: il calendario si riempie con le aperture in Apple Books, il
+          lettore, le date di inizio e fine e le sottolineature.
         </EmptyNote>
       ) : (
         <>

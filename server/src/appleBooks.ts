@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { updateBook } from './library.js';
 import { loadIndex } from './store.js';
+import { localDayOf, recordReadingDays, type ReadingEvent } from './readingLog.js';
 import { readAppleBooksData } from './appleBooksRead.js';
 import type {
   AppleAnnotationRow,
@@ -434,6 +435,8 @@ export async function importAppleBooksFromRows(
   let finishedDates = 0;
   let startedDates = 0;
   let progressBooks = 0;
+  // Giornate di lettura viste in Apple Books: si scrivono una volta sola a fine import.
+  const readingEvents: ReadingEvent[] = [];
 
   for (const { book, apple, titleRank } of matches) {
     const highlights = byAsset.get(apple.assetId) ?? [];
@@ -518,6 +521,21 @@ export async function importAppleBooksFromRows(
       await updateBook(book.id, patch, 'online');
     }
 
+    // Apple tiene solo l'ultima data: il registro conserva i giorni gia' visti.
+    // Come per fine e avanzamento, le date contano solo se il titolo corrisponde.
+    if (titleRank > 0) {
+      const addDay = (value: string, source: ReadingEvent['source']) => {
+        const day = localDayOf(value);
+        if (day) readingEvents.push({ day, bookId: book.id, source });
+      };
+      addDay(apple.lastEngagedAt, 'apple-engaged');
+      addDay(apple.lastOpenedAt, 'apple-opened');
+      // La prima apertura vale solo se non e' successiva alla fine.
+      const firstDay = localDayOf(apple.firstOpenedAt);
+      const endDay = localDayOf(patch.dateFinished ?? book.dateFinished);
+      if (firstDay && (!endDay || firstDay <= endDay)) addDay(apple.firstOpenedAt, 'apple-opened');
+    }
+
     matchedAssetIds.add(apple.assetId);
     matched.push({
       bookId: book.id,
@@ -530,6 +548,8 @@ export async function importAppleBooksFromRows(
     imported += highlights.length;
     if (changed) booksUpdated += 1;
   }
+
+  if (!options.dryRun) await recordReadingDays(readingEvents);
 
   // L'elenco dei libri non abbinati ha senso solo per un import completo.
   if (!scoped) {

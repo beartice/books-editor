@@ -201,7 +201,9 @@ function HighlightsCard({ stats, year }: { stats: ReadingStats; year: number }) 
           <h2 className="text-[26px] font-semibold sm:text-[30px]" style={serif}>
             {title}
           </h2>
-          <p className="mt-1.5 text-sm text-ink-300">Sottolineature in Apple Books e nel lettore, mese per mese</p>
+          <p className="mt-1.5 text-sm text-ink-300">Sottolineature in Apple Books e nel lettore, mese per mese
+            {stats.readingDaysCount > 0 && ` · ${plural(stats.readingDaysCount, 'giornata di lettura', 'giornate di lettura')} nell'anno`}
+          </p>
         </div>
         {busiest && record && (
           <div className="flex flex-wrap gap-x-6 gap-y-2">

@@ -60,6 +60,7 @@ import { getCoverThumbnail, removeCoverThumbnails } from './thumbnails.js';
 import { lookupSeries, readCachedSeries } from './providers/series.js';
 import { readSeriesTotals, writeSeriesTotal } from './seriesCache.js';
 import { computeReadingStats, localDay } from './readingStats.js';
+import { ensureReadingLog, recordReadingDays } from './readingLog.js';
 import { compareLocations, importAppleBooks, importAppleBooksFromRows, syncAppleBooksForBooks } from './appleBooks.js';
 import { AppleBooksInputError, parseAppleBooksInput } from './appleBooksInput.js';
 import { buildEpubWithMetadata, writeEpubMetadata } from './epubWrite.js';
@@ -793,6 +794,7 @@ export async function registerApi(app: FastifyInstance): Promise<void> {
       } catch (error) {
         return reply.code(404).send({ error: (error as Error).message });
       }
+      await recordReadingDays([{ day: localDay(), bookId: book.id, source: 'reader' }]);
       return { ok: true };
     },
   );
@@ -1438,8 +1440,11 @@ export async function registerApi(app: FastifyInstance): Promise<void> {
       return reply.code(400).send({ error: 'Anno non valido: indica un anno (AAAA) oppure «all»' });
     }
     const settings = await loadSettings();
-    const visible = visibleBooks(currentLibrary(), await loadIndex());
-    return computeReadingStats(visible, year, settings.wordsPerHour);
+    const all = await loadIndex();
+    const visible = visibleBooks(currentLibrary(), all);
+    // Il registro tiene tutti i libri (anche le fanfic nascoste): il filtro e' nel calcolo.
+    const log = await ensureReadingLog(all);
+    return computeReadingStats(visible, year, settings.wordsPerHour, new Date(), log);
   });
 }
 

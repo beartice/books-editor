@@ -151,29 +151,52 @@ export function EmptyNote({ children }: { children: ReactNode }) {
   );
 }
 
-/* --- calendario delle sottolineature --- */
+/* --- calendario delle giornate di lettura --- */
 
-export const HEAT_CLASSES = ['bg-ink-750', 'bg-accent-200', 'bg-accent-300', 'bg-accent-500', 'bg-accent-600'];
-const HEAT_LABELS = ['nessuna', '1–4', '5–14', '15–29', '30 o più'];
+// Vuoto, letto senza sottolineature (il verde piu' chiaro), poi le sottolineature in tre passi.
+export const HEAT_CLASSES = ['bg-ink-750', 'bg-accent-200', 'bg-accent-400', 'bg-accent-500', 'bg-accent-700'];
+const HEAT_LABELS = ['non letto', 'letto', '1–14 sottolineature', '15–29 sottolineature', '30 o più sottolineature'];
 
-export function heatBucket(count: number): number {
-  if (count <= 0) return 0;
-  if (count < 5) return 1;
-  if (count < 15) return 2;
-  if (count < 30) return 3;
-  return 4;
+/** 0 = nessuna lettura, 1 = letto senza sottolineature, 2-4 = sottolineature (1-14, 15-29, 30+). */
+export function heatBucket(read: boolean, highlights: number): number {
+  if (highlights >= 30) return 4;
+  if (highlights >= 15) return 3;
+  if (highlights >= 1) return 2;
+  return read ? 1 : 0;
 }
 
 export function HeatLegend() {
   return (
-    <div className="flex items-center gap-1 text-[11.5px] text-ink-400">
-      <span className="mr-1">meno</span>
-      {HEAT_CLASSES.map((cls, index) => (
-        <span key={cls} className={`h-3 w-3 rounded-[3px] ${cls}`} {...tipProps(HEAT_LABELS[index])} />
-      ))}
-      <span className="ml-1">più</span>
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11.5px] text-ink-400">
+      <span className="flex items-center gap-1.5">
+        <span className={`h-3 w-3 rounded-[3px] ${HEAT_CLASSES[0]}`} />
+        non letto
+      </span>
+      <span className="flex items-center gap-1.5">
+        <span className={`h-3 w-3 rounded-[3px] ${HEAT_CLASSES[1]}`} />
+        letto
+      </span>
+      <span className="flex items-center gap-1">
+        sottolineature
+        <span className="ml-0.5">poche</span>
+        {HEAT_CLASSES.slice(2).map((cls, index) => (
+          <span key={cls} className={`h-3 w-3 rounded-[3px] ${cls}`} {...tipProps(HEAT_LABELS[index + 2])} />
+        ))}
+        <span>molte</span>
+      </span>
     </div>
   );
+}
+
+/** «23/10: Debt», «20/05: The Raven King · 40 sottolineature», «Debt, Carrie (+1)». */
+function dayTip(day: string, entry: ReadingStats['readingDays'][string] | undefined): string {
+  const label = `${day.slice(8, 10)}/${day.slice(5, 7)}`;
+  if (!entry) return `${label}: nessuna lettura`;
+  const titles = entry.books.map((book) => book.title || 'Senza titolo');
+  let names = titles.slice(0, 2).join(', ');
+  if (titles.length > 2) names += ` (+${titles.length - 2})`;
+  const parts = [names, entry.highlights ? plural(entry.highlights, 'sottolineatura', 'sottolineature') : ''];
+  return `${label}: ${parts.filter(Boolean).join(' · ') || 'letto'}`;
 }
 
 /**
@@ -191,14 +214,12 @@ export function HeatCalendar({ stats }: { stats: ReadingStats }) {
   for (let index = 0; index < lead; index += 1) cells.push(<span key={`b${index}`} />);
   for (let time = first; time <= dayTime(last); time += DAY_MS) {
     const day = dayString(time);
-    const count = stats.highlightsByDay[day] ?? 0;
+    const entry = stats.readingDays[day];
     cells.push(
       <span
         key={day}
-        className={`h-[var(--c)] w-[var(--c)] rounded-[3px] ${HEAT_CLASSES[heatBucket(count)]}`}
-        {...tipProps(
-          `${formatDaySlash(day)}: ${count ? plural(count, 'sottolineatura', 'sottolineature') : 'nessuna sottolineatura'}`,
-        )}
+        className={`h-[var(--c)] w-[var(--c)] rounded-[3px] ${HEAT_CLASSES[heatBucket(Boolean(entry), entry?.highlights ?? 0)]}`}
+        {...tipProps(dayTip(day, entry))}
       />,
     );
   }

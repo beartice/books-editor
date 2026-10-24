@@ -33,7 +33,7 @@ let settingsCache: AppSettings | null = null;
 let writeChain: Promise<unknown> = Promise.resolve();
 
 /** Scrittura atomica: file temporaneo + rename, evita indici corrotti. */
-async function writeJsonAtomic(file: string, data: unknown): Promise<void> {
+export async function writeJsonAtomic(file: string, data: unknown): Promise<void> {
   ensureDir(path.dirname(file));
   const tmp = `${file}.${process.pid}.tmp`;
   await fsp.writeFile(tmp, JSON.stringify(data, null, 2), 'utf8');

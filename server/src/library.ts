@@ -14,6 +14,7 @@ import {
 import { loadIndex, loadSettings, saveIndex, toSummary } from './store.js';
 import { currentLibrary, visibleBooks } from './libraries.js';
 import { notifyBook } from './bookEvents.js';
+import { localDayOf, recordReadingDays, type ReadingEvent } from './readingLog.js';
 import { htmlToText } from './htmlText.js';
 import { detectLanguage, toIso6391 } from './language.js';
 import { normalizeTags } from './tags.js';
@@ -995,6 +996,13 @@ export async function updateBook(
 
   index[position] = next;
   await saveIndex(index);
+  // Inizio e fine lettura (a mano o in automatico) sono giornate di lettura.
+  const readingEvents: ReadingEvent[] = [];
+  const startedDay = patch.dateStarted ? localDayOf(patch.dateStarted) : null;
+  const finishedDay = patch.dateFinished ? localDayOf(patch.dateFinished) : null;
+  if (startedDay) readingEvents.push({ day: startedDay, bookId: id, source: 'started' });
+  if (finishedDay) readingEvents.push({ day: finishedDay, bookId: id, source: 'finished' });
+  await recordReadingDays(readingEvents);
   // Con `touch: false` (posizione di lettura) non cambia nulla che Jellyfin debba sapere.
   if (options.touch !== false) notifyBook(currentLibrary(), next.id, 'changed');
   return next;

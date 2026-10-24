@@ -732,6 +732,12 @@ export interface ReadingStats {
   };
   /** Sottolineature (Apple Books e lettore) per giorno, nella finestra. */
   highlightsByDay: Record<string, number>;
+  /**
+   * Giornate di lettura nella finestra (registro delle letture + giorni delle
+   * sottolineature): libri letti quel giorno e sottolineature fatte.
+   */
+  readingDays: Record<string, { books: { id: string; title: string }[]; highlights: number }>;
+  readingDaysCount: number;
   highlightsByMonth: ReadingStatsMonth[];
   highlightsTotal: number;
   highlightsDays: number;
