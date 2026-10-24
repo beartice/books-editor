@@ -80,7 +80,7 @@ export interface JellyfinImportState {
   libraryId: string;
   total: number;
   done: number;
-  imported: Array<{ id: string; title: string }>;
+  imported: Array<{ id: string; title: string; kind?: 'book' | 'fanfic' }>;
   duplicates: Array<{ title: string; existing: string }>;
   /** File aggiunti come altra lingua di un libro gia' presente. */
   editions: Array<{ title: string; book: string; language: string }>;
@@ -547,7 +547,7 @@ async function importOne(
       }
     }
     const updated = await updateBook(meta.id, patch, 'online');
-    job.imported.push({ id: updated.id, title: updated.title || title });
+    job.imported.push({ id: updated.id, title: updated.title || title, kind: updated.kind });
   } finally {
     await prepared?.cleanup();
     await fsp.rm(temp, { force: true });

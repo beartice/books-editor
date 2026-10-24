@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { FormEvent } from 'react';
-import { useStore } from '../store';
+import { hideFanficsOf, libraryNameOf, useStore } from '../store';
 import { ApiError, api } from '../api';
 import type { AppleBooksImportResult } from '@shared/types';
 import { desktop, importAppleBooksViaApp, setAppleAutoSync } from '../desktop';
@@ -13,7 +13,9 @@ interface Props {
 }
 
 export default function SettingsDialog({ onClose }: Props) {
-  const { settings, setSettings, libraryId, appleSync } = useStore();
+  const { settings, setSettings, libraryId, appleSync, setHideFanfics, busy: storeBusy } = useStore();
+  const hideFanfics = useStore(hideFanficsOf);
+  const currentLibraryName = useStore(libraryNameOf);
   const [libraryRoot, setLibraryRoot] = useState(settings?.libraryRoot ?? '');
   const [libraryName, setLibraryName] = useState(settings?.libraryName ?? '');
   const [searchLanguage, setSearchLanguage] = useState(settings?.searchLanguage ?? 'it');
@@ -192,6 +194,23 @@ export default function SettingsDialog({ onClose }: Props) {
                   Variabile d'ambiente <code className="font-mono">LIBRARY_ROOT</code> per il deployment.
                 </>
               )}
+            </span>
+          </label>
+
+          <label className="flex cursor-pointer items-start gap-3 rounded-lg border border-black/[0.06] bg-ink-800 p-3">
+            <input
+              type="checkbox"
+              checked={!hideFanfics}
+              disabled={busy || storeBusy}
+              onChange={(event) => void setHideFanfics(!event.target.checked)}
+              className="mt-0.5"
+            />
+            <span>
+              <span className="block text-sm text-ink-100">Mostra le fanfiction</span>
+              <span className="block text-[11px] text-ink-500">
+                Vale solo per «{currentLibraryName}». Le fanfiction nascoste restano nella libreria e
+                ricompaiono riattivando l'opzione.
+              </span>
             </span>
           </label>
 

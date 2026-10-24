@@ -181,7 +181,7 @@ export interface JellyfinImportState {
   libraryId: string;
   total: number;
   done: number;
-  imported: Array<{ id: string; title: string }>;
+  imported: Array<{ id: string; title: string; kind?: 'book' | 'fanfic' }>;
   duplicates: Array<{ title: string; existing: string }>;
   /** File aggiunti come altra lingua di un libro gia' presente. */
   editions: Array<{ title: string; book: string; language: string }>;
@@ -231,6 +231,12 @@ export const api = {
   libraries: () => request<LibrarySummary[]>('/libraries'),
   createLibrary: (name: string) =>
     request<LibrarySummary>('/libraries', { method: 'POST', body: JSON.stringify({ name }) }),
+  /** Mostra o nasconde le fanfiction di una libreria. */
+  setHideFanfics: (id: string, hideFanfics: boolean) =>
+    request<LibrarySummary>(`/libraries/${encodeURIComponent(id)}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ hideFanfics }),
+    }),
   renameLibrary: (id: string, name: string) =>
     request<LibrarySummary>(`/libraries/${encodeURIComponent(id)}`, {
       method: 'PATCH',

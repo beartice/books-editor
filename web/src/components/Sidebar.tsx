@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { describeFilter, libraryNameOf, matchesQuickFilter, useStore } from '../store';
+import { describeFilter, hideFanficsOf, libraryNameOf, matchesQuickFilter, useStore } from '../store';
 import type { Filters, QuickFilter } from '../store';
 import { cn, formatNumber } from '../utils';
 import { READING_STATUSES, isFanficUpdateAvailable } from '@shared/types';
@@ -152,6 +152,8 @@ export default function Sidebar({
     [books],
   );
 
+  const hideFanfics = useStore(hideFanficsOf);
+
   const navItems: Array<{
     quick: QuickFilter;
     label: string;
@@ -160,7 +162,7 @@ export default function Sidebar({
   }> = [
     { quick: 'all', label: 'Scopri', icon: IconHome },
     { quick: 'books', label: 'Libri', icon: IconBook },
-    { quick: 'fanfic', label: 'Fanfiction', icon: IconSparkle },
+    ...(hideFanfics ? [] : [{ quick: 'fanfic' as const, label: 'Fanfiction', icon: IconSparkle }]),
     { quick: 'favorites', label: 'Preferiti', icon: IconHeart },
     { quick: 'unread', label: 'Da leggere', icon: IconBookmark },
     ...(updatesCount > 0
@@ -311,17 +313,20 @@ export default function Sidebar({
           </div>
 
           <div className="mt-1">
-            <Section title="Tipo">
-              {(['book', 'fanfic'] as const).map((kind) => (
-                <FilterRow
-                  key={kind}
-                  label={describeFilter('kinds', kind)}
-                  count={books.filter((book) => book.kind === kind).length}
-                  active={filters.kinds.includes(kind)}
-                  onClick={() => toggle('kinds', kind)}
-                />
-              ))}
-            </Section>
+            {/* Senza fanfiction resterebbe solo «Libri»: il filtro non serve. */}
+            {!hideFanfics && (
+              <Section title="Tipo">
+                {(['book', 'fanfic'] as const).map((kind) => (
+                  <FilterRow
+                    key={kind}
+                    label={describeFilter('kinds', kind)}
+                    count={books.filter((book) => book.kind === kind).length}
+                    active={filters.kinds.includes(kind)}
+                    onClick={() => toggle('kinds', kind)}
+                  />
+                ))}
+              </Section>
+            )}
 
             <Section title="Formato">
               {facets.formats.map(([format, count]) => (
@@ -457,7 +462,7 @@ export default function Sidebar({
             total={stats?.total ?? books.length}
             words={stats?.words ?? 0}
             books={stats?.books ?? 0}
-            fanfics={stats?.fanfics ?? 0}
+            fanfics={hideFanfics ? null : (stats?.fanfics ?? 0)}
           />
         </div>
 
@@ -499,7 +504,8 @@ function LibraryCard({
   total: number;
   words: number;
   books: number;
-  fanfics: number;
+  /** null = fanfiction nascoste: la voce non si mostra. */
+  fanfics: number | null;
 }) {
   const libraryName = useStore(libraryNameOf);
   return (
@@ -524,8 +530,8 @@ function LibraryCard({
             </span>
           </p>
           <p className="mt-1 text-[10px] leading-relaxed text-ink-500">
-            {formatNumber(words)} parole · {books} {books === 1 ? 'libro' : 'libri'} · {fanfics}{' '}
-            fanfic
+            {formatNumber(words)} parole · {books} {books === 1 ? 'libro' : 'libri'}
+            {fanfics !== null && ` · ${fanfics} fanfic`}
           </p>
         </div>
       </div>

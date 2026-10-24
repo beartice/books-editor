@@ -6,7 +6,7 @@ import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { DATA_DIR, LIBRARIES_ROOT, ensureDir } from './config.js';
 import { dropIndexCache, loadIndexFor, loadSettings, peekSettings, saveGlobalSettings } from './store.js';
 import { dropSeriesCache } from './seriesCache.js';
-import type { LibrarySummary } from '../../shared/types.js';
+import type { BookMeta, LibrarySummary } from '../../shared/types.js';
 
 /*
  * Librerie multiple. La principale e' quella di sempre: cartella
@@ -28,6 +28,8 @@ export interface LibraryInfo {
   /** Cartella di indice e cache delle serie. */
   dataDir: string;
   isMain: boolean;
+  /** true se le fanfiction sono nascoste nell'interfaccia (restano su disco e nell'indice). */
+  hideFanfics: boolean;
 }
 
 interface RegistryEntry {
@@ -36,6 +38,8 @@ interface RegistryEntry {
   /** Nome della sottocartella in LIBRARIES_ROOT. */
   folder: string;
   createdAt: string;
+  /** Fanfiction nascoste nell'interfaccia di questa libreria. */
+  hideFanfics?: boolean;
 }
 
 interface RegistryFile {
@@ -65,6 +69,7 @@ function mainLibrary(): LibraryInfo {
     root: settings.libraryRoot,
     dataDir: DATA_DIR,
     isMain: true,
+    hideFanfics: settings.mainHideFanfics === true,
   };
 }
 
@@ -137,7 +142,13 @@ function toInfo(entry: RegistryEntry): LibraryInfo {
     root: path.join(LIBRARIES_ROOT, entry.folder),
     dataDir: path.join(LIBRARY_DATA_DIR, entry.id),
     isMain: false,
+    hideFanfics: entry.hideFanfics === true,
   };
+}
+
+/** Opere da mostrare: senza le fanfiction se la libreria le nasconde. L'indice resta completo. */
+export function visibleBooks<T extends Pick<BookMeta, 'kind'>>(library: LibraryInfo, books: T[]): T[] {
+  return library.hideFanfics ? books.filter((book) => book.kind !== 'fanfic') : books;
 }
 
 /** Libreria con l'id indicato (`main` compresa), oppure null se non esiste. */
@@ -154,16 +165,19 @@ export async function allLibraries(): Promise<LibraryInfo[]> {
   return [mainLibrary(), ...(await loadRegistry()).map(toInfo)];
 }
 
+async function summarize(library: LibraryInfo): Promise<LibrarySummary> {
+  return {
+    id: library.id,
+    name: library.name,
+    // Solo le opere visibili: con le fanfiction nascoste non si contano.
+    bookCount: visibleBooks(library, await loadIndexFor(library)).length,
+    isMain: library.isMain,
+    hideFanfics: library.hideFanfics,
+  };
+}
+
 export async function listLibraries(): Promise<LibrarySummary[]> {
-  const libraries = await allLibraries();
-  return Promise.all(
-    libraries.map(async (library) => ({
-      id: library.id,
-      name: library.name,
-      bookCount: (await loadIndexFor(library)).length,
-      isMain: library.isMain,
-    })),
-  );
+  return Promise.all((await allLibraries()).map(summarize));
 }
 
 /* ------------------------------------------------------------------ nomi -- */
@@ -285,7 +299,7 @@ export async function createLibrary(rawName: unknown): Promise<LibrarySummary> {
       const code = (error as NodeJS.ErrnoException).code;
       throw new LibraryError(500, `Impossibile creare la cartella della libreria: ${code ?? (error as Error).message}`);
     }
-    return { id: entry.id, name, bookCount: 0, isMain: false };
+    return { id: entry.id, name, bookCount: 0, isMain: false, hideFanfics: false };
   });
 }
 
@@ -301,12 +315,23 @@ export async function renameLibrary(id: string, rawName: unknown): Promise<Libra
       const entries = await loadRegistry();
       await saveRegistry(entries.map((entry) => (entry.id === id ? { ...entry, name } : entry)));
     }
-    return {
-      id,
-      name,
-      bookCount: (await loadIndexFor(library)).length,
-      isMain: library.isMain,
-    };
+    return summarize((await getLibrary(id)) ?? library);
+  });
+}
+
+/** Mostra o nasconde le fanfiction di una libreria (`main` compresa). Nulla viene toccato su disco. */
+export async function setLibraryHideFanfics(id: string, hide: unknown): Promise<LibrarySummary> {
+  if (typeof hide !== 'boolean') throw new LibraryError(400, 'Il valore di «Mostra le fanfiction» deve essere si\' o no');
+  return withRegistryLock(async () => {
+    const library = await getLibrary(id);
+    if (!library) throw new LibraryError(404, 'Libreria inesistente');
+    if (library.isMain) {
+      await saveGlobalSettings({ mainHideFanfics: hide });
+    } else {
+      const entries = await loadRegistry();
+      await saveRegistry(entries.map((entry) => (entry.id === id ? { ...entry, hideFanfics: hide } : entry)));
+    }
+    return summarize((await getLibrary(id)) ?? library);
   });
 }
 

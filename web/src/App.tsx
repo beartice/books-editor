@@ -1,5 +1,5 @@
 import { Suspense, lazy, useEffect, useMemo, useState } from 'react';
-import { libraryNameOf, matchesQuickFilter, selectVisible, useStore } from './store';
+import { hideFanficsOf, libraryNameOf, matchesQuickFilter, selectVisible, useStore } from './store';
 import type { QuickFilter } from './store';
 import TopBar from './components/TopBar';
 import Sidebar from './components/Sidebar';
@@ -352,6 +352,9 @@ const CATEGORIES: CategoryDefinition[] = [
 function CategoryShelf({ books }: { books: BookSummary[] }) {
   const filters = useStore((state) => state.filters);
   const setQuickFilter = useStore((state) => state.setQuickFilter);
+  const hideFanfics = useStore(hideFanficsOf);
+  // Fanfiction nascoste: niente scaffale dedicato.
+  const categories = hideFanfics ? CATEGORIES.filter((category) => category.quick !== 'fanfic') : CATEGORIES;
 
   const apply = (quick: QuickFilter) => {
     setQuickFilter(quick);
@@ -373,7 +376,7 @@ function CategoryShelf({ books }: { books: BookSummary[] }) {
       </div>
 
       <div className="mt-5 grid grid-cols-2 gap-3 lg:grid-cols-4">
-        {CATEGORIES.map((category) => {
+        {categories.map((category) => {
           const matching = books.filter(category.match);
           const covers = matching.slice(0, 2);
           const active = matchesQuickFilter(filters, category.quick);

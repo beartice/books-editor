@@ -259,6 +259,8 @@ interface State {
   /** Ricarica elenco e statistiche senza spinner e senza toccare selezione, filtri o pagina. */
   refreshBooks: () => Promise<void>;
   loadLibraries: () => Promise<void>;
+  /** Mostra o nasconde le fanfiction della libreria aperta, poi ricarica elenco, statistiche e librerie. */
+  setHideFanfics: (hide: boolean) => Promise<void>;
   setLibrary: (id: string, options?: { select?: string }) => Promise<void>;
   moveBook: (toId: string) => Promise<void>;
   setQuery: (query: string) => void;
@@ -503,6 +505,30 @@ export const useStore = create<State>((set, get) => ({
       set({ libraries: await api.libraries() });
     } catch (error) {
       get().toast((error as Error).message, 'error');
+    }
+  },
+
+  setHideFanfics: async (hide) => {
+    const libraryId = get().libraryId;
+    set({ busy: true });
+    try {
+      await api.setHideFanfics(libraryId, hide);
+      // Con le fanfiction nascoste un filtro sulle fanfic non avrebbe piu' senso.
+      if (hide) {
+        set((state) => ({
+          filters: {
+            ...state.filters,
+            kinds: state.filters.kinds.filter((kind) => kind !== 'fanfic'),
+            fandoms: [],
+            updatesOnly: false,
+          },
+        }));
+      }
+      await Promise.all([get().refreshBooks(), get().loadLibraries()]);
+    } catch (error) {
+      get().toast((error as Error).message, 'error');
+    } finally {
+      set({ busy: false });
     }
   },
 
@@ -935,6 +961,11 @@ export function libraryNameOf(state: {
 }): string {
   const fromList = state.libraries.find((library) => library.id === state.libraryId)?.name;
   return fromList?.trim() || state.settings?.libraryName?.trim() || 'La mia libreria';
+}
+
+/** true se la libreria aperta nasconde le fanfiction. */
+export function hideFanficsOf(state: { libraries: LibrarySummary[]; libraryId: string }): boolean {
+  return state.libraries.find((library) => library.id === state.libraryId)?.hideFanfics === true;
 }
 
 /** Etichette leggibili per i filtri laterali. */

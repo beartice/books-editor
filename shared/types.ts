@@ -412,6 +412,8 @@ export interface AppSettings {
   /** Sola lettura: dimensione massima di un file caricato dal browser (MAX_UPLOAD_MB). */
   maxUploadMb?: number;
   libraryName: string;
+  /** Fanfiction nascoste nella libreria principale (si cambia da PATCH /api/libraries/main). */
+  mainHideFanfics?: boolean;
   /** Lingua di default per i metadati cercati online. */
   searchLanguage: string;
   /** Provider abilitati per le ricerche online (Goodreads solo per le serie). */
@@ -545,6 +547,9 @@ export type AppleBooksWriteField = 'title' | 'authors' | 'cover';
 export interface LibrarySummary {
   id: string;
   name: string;
+  /** Opere visibili (senza le fanfiction se sono nascoste). */
   bookCount: number;
   isMain: boolean;
+  /** true se le fanfiction sono nascoste nell'interfaccia di questa libreria. */
+  hideFanfics: boolean;
 }

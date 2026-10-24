@@ -12,6 +12,7 @@ import {
   parseSeriesFromTitle,
 } from './metadata/fanfic.js';
 import { loadIndex, loadSettings, saveIndex, toSummary } from './store.js';
+import { currentLibrary, visibleBooks } from './libraries.js';
 import { htmlToText } from './htmlText.js';
 import { detectLanguage, toIso6391 } from './language.js';
 import { normalizeTags } from './tags.js';
@@ -1484,6 +1485,6 @@ export async function mergeBooks(targetId: string, otherId: string): Promise<Mer
 }
 
 export async function listBooks(): Promise<BookSummary[]> {
-  const index = await loadIndex();
+  const index = visibleBooks(currentLibrary(), await loadIndex());
   return index.map(toSummary);
 }

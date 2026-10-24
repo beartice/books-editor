@@ -3,7 +3,7 @@ import { api, ApiError, tooLargeMessage } from '../api';
 import type { EfpImportResult, JellyfinImportState, JellyfinLibrary, JellyfinPreview } from '../api';
 import type { BookMeta, BookSummary, ConversionSupport } from '@shared/types';
 import { syncAppleBooksFromApp } from '../desktop';
-import { libraryNameOf, useStore } from '../store';
+import { hideFanficsOf, libraryNameOf, useStore } from '../store';
 import { cn, languageLabel } from '../utils';
 import { IconClose, IconUpload } from './icons';
 
@@ -22,6 +22,17 @@ export default function ImportDialog({ onClose }: Props) {
   const [efpBusy, setEfpBusy] = useState<'import' | 'download' | null>(null);
   const { load, select, toast, confirm, settings, libraries } = useStore();
   const libraryName = useStore(libraryNameOf);
+  const hideFanfics = useStore(hideFanficsOf);
+
+  /** Aggiunta al testo del duplicato quando la scheda esistente e' una fanfiction nascosta. */
+  const hiddenNote = (book: BookSummary) =>
+    hideFanfics && book.kind === 'fanfic' ? ', fanfiction nascosta in questa libreria' : '';
+
+  /** Se una fanfiction e' stata importata in una libreria che le nasconde, lo dice (la scheda esiste ma non si vede). */
+  const hiddenFanficNotice = (kinds: Array<'book' | 'fanfic' | undefined>) =>
+    hideFanfics && kinds.includes('fanfic')
+      ? `Fanfiction importata: in «${libraryName}» le fanfiction sono nascoste (Impostazioni → Mostra le fanfiction)`
+      : null;
 
   // Jellyfin: librerie, analisi e job di import in background.
   const jellyfinReady = Boolean(settings?.jellyfinUrl && settings?.jellyfinApiKeySet);
@@ -69,6 +80,8 @@ export default function ImportDialog({ onClose }: Props) {
           if (state.running) return;
           await load();
           void syncAppleBooksFromApp(state.imported.map((item) => item.id));
+          const notice = hiddenFanficNotice(state.imported.map((item) => item.kind));
+          if (notice) toast(notice, 'info');
           toast(
             `Importati ${state.imported.length}, aggiunte come altra lingua ${state.editions?.length ?? 0}, duplicati scartati ${state.duplicates.length}, errori ${state.errors.length}`,
             state.errors.length ? 'error' : 'success',
@@ -153,7 +166,7 @@ export default function ImportDialog({ onClose }: Props) {
       title: 'stesso titolo e autore',
     };
     const answer = await confirm(
-      `«${book.title}»${authors} è già nella libreria (${reasons[reason] ?? reason}). Vuoi importarlo di nuovo?`,
+      `«${book.title}»${authors} è già nella libreria (${reasons[reason] ?? reason}${hiddenNote(book)}). Vuoi importarlo di nuovo?`,
       [
         { label: 'Importa comunque', value: 'force', primary: true },
         { label: 'Apri esistente', value: 'open' },
@@ -193,7 +206,9 @@ export default function ImportDialog({ onClose }: Props) {
       }
       await load();
       if (imported) void syncAppleBooksFromApp([imported.id]);
-      toast(attachedLanguage ? `Aggiunto come ${attachedLanguage}` : 'Opera importata', 'success');
+      const notice = imported ? hiddenFanficNotice([imported.kind]) : null;
+      if (notice) toast(notice, 'info');
+      else toast(attachedLanguage ? `Aggiunto come ${attachedLanguage}` : 'Opera importata', 'success');
       onClose();
     } catch (error) {
       toast((error as Error).message, 'error');
@@ -261,7 +276,7 @@ export default function ImportDialog({ onClose }: Props) {
           };
           const authors = book.authors?.length ? ` di ${book.authors.join(', ')}` : '';
           const answer = await confirm(
-            `«${book.title}»${authors} è già nella libreria (${reasons[reason] ?? reason}).`,
+            `«${book.title}»${authors} è già nella libreria (${reasons[reason] ?? reason}${hiddenNote(book)}).`,
             body.canUpdate
               ? [
                   { label: 'Aggiorna la storia esistente', value: 'update', primary: true },
@@ -283,6 +298,8 @@ export default function ImportDialog({ onClose }: Props) {
         `${result.created ? 'Storia importata' : 'Storia aggiornata'}: "${result.book.title}" · ${result.chapters} capitoli`,
         'success',
       );
+      const notice = hiddenFanficNotice([result.book.kind]);
+      if (notice) toast(notice, 'info');
       await select(result.book.id);
       onClose();
     } catch (error) {

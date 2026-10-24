@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef } from 'react';
-import { libraryNameOf, useStore } from '../store';
+import { hideFanficsOf, libraryNameOf, useStore } from '../store';
 import type { QuickFilter } from '../store';
 import { SORT_LABELS, cn, initials } from '../utils';
 import type { SortKey } from '@shared/types';
@@ -62,6 +62,7 @@ export default function TopBar({
   }, []);
 
   const libraryName = useStore(libraryNameOf);
+  const hideFanfics = useStore(hideFanficsOf);
   const libraryInitials = initials(libraryName) || 'LM';
   const category = categoryFromFilters(filters);
 
@@ -167,7 +168,7 @@ export default function TopBar({
             >
               <option value="all">Tutte le categorie</option>
               <option value="books">Libri</option>
-              <option value="fanfic">Fanfiction</option>
+              {!hideFanfics && <option value="fanfic">Fanfiction</option>}
               <option value="favorites">Preferiti</option>
             </select>
             <IconChevron className="h-3.5 w-3.5 shrink-0 rotate-90 text-ink-500" />

@@ -25,6 +25,8 @@ import {
   isInsideFolder,
   listLibraries,
   renameLibrary,
+  setLibraryHideFanfics,
+  visibleBooks,
 } from './libraries.js';
 import { moveBookToLibrary } from './libraryMove.js';
 import { conversionSupport } from './convert.js';
@@ -305,9 +307,20 @@ export async function registerApi(app: FastifyInstance): Promise<void> {
     }
   });
 
-  app.patch<{ Params: { id: string }; Body: { name?: string } }>('/api/libraries/:id', async (request, reply) => {
+  app.patch<{ Params: { id: string }; Body: { name?: string; hideFanfics?: boolean } }>('/api/libraries/:id', async (request, reply) => {
     try {
-      return await renameLibrary(request.params.id, request.body?.name);
+      const { name, hideFanfics } = request.body ?? {};
+      if (name === undefined && hideFanfics === undefined) {
+        throw new LibraryError(400, 'Nessuna modifica richiesta');
+      }
+      // Se arrivano entrambi, prima si controlla tutto: il nome puo' fallire (409) e non si applica mezza richiesta.
+      if (hideFanfics !== undefined && typeof hideFanfics !== 'boolean') {
+        throw new LibraryError(400, 'Il valore di «Mostra le fanfiction» deve essere si\' o no');
+      }
+      let summary;
+      if (name !== undefined) summary = await renameLibrary(request.params.id, name);
+      if (hideFanfics !== undefined) summary = await setLibraryHideFanfics(request.params.id, hideFanfics);
+      return summary;
     } catch (error) {
       return libraryFailure(reply, error);
     }
@@ -352,6 +365,8 @@ export async function registerApi(app: FastifyInstance): Promise<void> {
       delete patch.googleBooksApiKey;
     }
     delete patch.libraryRootLocked;
+    // Si cambia solo da PATCH /api/libraries/main.
+    delete patch.mainHideFanfics;
     const library = currentLibrary();
     let renamedTo: string | undefined;
     if (!library.isMain) {
@@ -446,8 +461,9 @@ export async function registerApi(app: FastifyInstance): Promise<void> {
   /* ------------------------------------------------------------- libri -- */
   app.get('/api/books', async () => {
     const books = await listBooks();
-    const full = await loadIndex();
-    return { books, stats: statsFor(full) };
+    // Le statistiche contano le stesse opere dell'elenco: senza le fanfiction nascoste.
+    const visible = visibleBooks(currentLibrary(), await loadIndex());
+    return { books, stats: statsFor(visible) };
   });
 
   app.get<{ Params: { id: string } }>('/api/books/:id', async (request, reply) => {
@@ -1406,7 +1422,7 @@ export async function registerApi(app: FastifyInstance): Promise<void> {
     },
   );
 
-  app.get('/api/stats', async () => statsFor(await loadIndex()));
+  app.get('/api/stats', async () => statsFor(visibleBooks(currentLibrary(), await loadIndex())));
 }
 
 /** Campi che l'utente puo' modificare a mano. */
