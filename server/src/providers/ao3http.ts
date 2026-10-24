@@ -22,6 +22,38 @@ export class Ao3HttpError extends Error {
 }
 
 /**
+ * Errori temporanei fra Cloudflare e AO3 (per esempio 525 «SSL handshake
+ * failed», che AO3 restituisce a caso per alcune richieste): vale la pena
+ * riprovare. 429 e 503 no: li gestisce chi chiama, con attese piu' lunghe.
+ */
+export function isTransientAo3Status(status: number): boolean {
+  return status === 502 || status === 504 || (status >= 520 && status <= 526);
+}
+
+/** Pausa prima del ritentativo n (0, 1, ...): 3 s, poi 7 s. AO3_RETRY_DELAY_MS la cambia (prove). */
+function retryDelayMs(attempt: number): number {
+  const base = Number(process.env.AO3_RETRY_DELAY_MS ?? 3000);
+  return Math.round((Number.isFinite(base) ? base : 3000) * (attempt === 0 ? 1 : 2.3));
+}
+
+const AO3_ATTEMPTS = 3;
+
+/** Esegue `task` e lo ripete fino a 3 volte se AO3 risponde con un errore temporaneo. */
+export async function withAo3Retry<T>(
+  task: () => Promise<T>,
+  statusOf: (error: unknown) => number = (error) => (error instanceof Ao3HttpError ? error.status : 0),
+): Promise<T> {
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      return await task();
+    } catch (error) {
+      if (!isTransientAo3Status(statusOf(error)) || attempt >= AO3_ATTEMPTS - 1) throw error;
+      await new Promise((resolve) => setTimeout(resolve, retryDelayMs(attempt)));
+    }
+  }
+}
+
+/**
  * Ultima spiaggia quando né curl né Node riescono a raggiungere AO3: un
  * lettore pubblico che restituisce l'HTML originale della pagina. Serve solo
  * per contenuti AO3 pubblici e viene usato dopo i tentativi diretti.
@@ -72,6 +104,14 @@ export async function fetchAo3WithCurl(
   url: string,
   timeoutMs: number,
   maxSeconds = 15,
+): Promise<string> {
+  return withAo3Retry(() => fetchAo3WithCurlOnce(url, timeoutMs, maxSeconds));
+}
+
+async function fetchAo3WithCurlOnce(
+  url: string,
+  timeoutMs: number,
+  maxSeconds: number,
 ): Promise<string> {
   const seconds = Math.max(1, Math.min(maxSeconds, Math.ceil(timeoutMs / 1000)));
   const args = [
@@ -154,6 +194,14 @@ export async function fetchAo3WithCurl(
  * solo se la risposta e' 2xx.
  */
 export async function downloadAo3File(
+  url: string,
+  destination: string,
+  timeoutMs: number,
+): Promise<void> {
+  return withAo3Retry(() => downloadAo3FileOnce(url, destination, timeoutMs));
+}
+
+async function downloadAo3FileOnce(
   url: string,
   destination: string,
   timeoutMs: number,

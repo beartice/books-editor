@@ -3,7 +3,7 @@ import path from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { DATA_DIR, ensureDir } from './config.js';
 import { BROWSER_USER_AGENT } from './providers/fanfic.js';
-import { STATUS_MARKER, runCurl } from './providers/ao3http.js';
+import { STATUS_MARKER, isTransientAo3Status, runCurl, withAo3Retry } from './providers/ao3http.js';
 import { saveAo3Session } from './providers/ao3session.js';
 
 /**
@@ -44,7 +44,33 @@ const COMMON_ARGS = [
   'Accept-Language: en-US,en;q=0.9,it;q=0.8',
 ];
 
+/** Come `curlPageOnce`, ma riprova gli errori temporanei di Cloudflare (es. 525). */
 async function curlPage(
+  args: string[],
+  url: string,
+  stdin?: string,
+): Promise<{ status: number; body: string }> {
+  return withAo3Retry(
+    async () => {
+      const page = await curlPageOnce(args, url, stdin);
+      if (isTransientAo3Status(page.status)) throw new TransientPage(page);
+      return page;
+    },
+    (error) => (error instanceof TransientPage ? error.page.status : 0),
+  ).catch((error: unknown) => {
+    // Dopo l'ultimo tentativo si restituisce la pagina: decide chi chiama.
+    if (error instanceof TransientPage) return error.page;
+    throw error;
+  });
+}
+
+class TransientPage extends Error {
+  constructor(readonly page: { status: number; body: string }) {
+    super(`HTTP ${page.status}`);
+  }
+}
+
+async function curlPageOnce(
   args: string[],
   url: string,
   stdin?: string,
@@ -88,6 +114,14 @@ export function extractAuthenticityToken(html: string): string | null {
   return token ? decodeAttr(token) : null;
 }
 
+/** Messaggio per un login non riuscito per colpa di AO3/Cloudflare. */
+function blockedMessage(status: number): string {
+  if (isTransientAo3Status(status)) {
+    return `AO3 ha un problema temporaneo (errore ${status} di Cloudflare): riprova fra qualche minuto`;
+  }
+  return BLOCKED;
+}
+
 function isCloudflare(status: number, body: string): boolean {
   return (
     status === 403 ||
@@ -113,7 +147,7 @@ export async function loginAo3(username: string, password: string): Promise<void
   await fsp.writeFile(jar, '', { mode: 0o600 });
   try {
     const page = await curlPage(['-c', jar], LOGIN_URL);
-    if (isCloudflare(page.status, page.body)) throw new Ao3LoginError(502, BLOCKED);
+    if (isCloudflare(page.status, page.body)) throw new Ao3LoginError(502, blockedMessage(page.status));
     const token = extractAuthenticityToken(page.body);
     if (!token) throw new Ao3LoginError(502, 'AO3 ha restituito una pagina di accesso inattesa');
 
@@ -129,7 +163,7 @@ export async function loginAo3(username: string, password: string): Promise<void
       LOGIN_URL,
       curlConfigWithData(form),
     );
-    if (isCloudflare(result.status, result.body)) throw new Ao3LoginError(502, BLOCKED);
+    if (isCloudflare(result.status, result.body)) throw new Ao3LoginError(502, blockedMessage(result.status));
     // Riuscito: la pagina finale ha il link «Log Out» (oppure «Hi, <utente>»).
     if (!/\/users\/logout|>\s*Log Out\s*</i.test(result.body)) {
       throw new Ao3LoginError(401, 'Utente o password AO3 errati');
