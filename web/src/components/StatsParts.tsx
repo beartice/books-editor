@@ -1,6 +1,8 @@
-import type { ReactNode } from 'react';
+import type { FocusEvent, KeyboardEvent, MouseEvent, PointerEvent, ReactNode } from 'react';
 import { useEffect, useRef } from 'react';
 import type { ReadingStats } from '@shared/types';
+import { Hit, activateTip, hideTip, isKeyboardFocus, showTipAt, showTipOn, useStatsUi } from './StatsUi';
+import type { ListSpec, TipContent } from './StatsUi';
 
 // Pezzi condivisi dalle tre viste delle statistiche: formati, legenda, calendario.
 
@@ -118,24 +120,18 @@ export function formatReadDays(days: number | null): string {
   return days === 1 ? '1 giorno' : `${numberFormat.format(days)} giorni`;
 }
 
-/* --- suggerimenti --- */
-
-/** Attributi per un suggerimento: `title` per il mouse, `data-tip` per il tocco (vedi StatsView). */
-export function tipProps(text: string): { title: string; 'data-tip': string } {
-  return { title: text, 'data-tip': text };
-}
-
 /* --- elementi comuni --- */
 
+/** Legenda Libri / Fanfiction: passandoci sopra (o col focus) si attenua l'altra serie. */
 export function KindLegend({ hasFanfics }: { hasFanfics: boolean }) {
   return (
-    <div className="flex gap-3.5 text-[12.5px] text-ink-200">
-      <span className="flex items-center gap-1.5">
+    <div className="flex gap-1.5 text-[12.5px] text-ink-200">
+      <span tabIndex={0} className="legend-book flex min-h-8 items-center gap-1.5 rounded-md px-1.5">
         <span className="h-2.5 w-2.5 rounded-[3px]" style={{ background: BOOK_COLOR }} />
         Libri
       </span>
       {hasFanfics && (
-        <span className="flex items-center gap-1.5">
+        <span tabIndex={0} className="legend-fanfic flex min-h-8 items-center gap-1.5 rounded-md px-1.5">
           <span className="h-2.5 w-2.5 rounded-[3px]" style={{ background: FANFIC_COLOR }} />
           Fanfiction
         </span>
@@ -180,7 +176,12 @@ export function HeatLegend() {
         sottolineature
         <span className="ml-0.5">poche</span>
         {HEAT_CLASSES.slice(2).map((cls, index) => (
-          <span key={cls} className={`h-3 w-3 rounded-[3px] ${cls}`} {...tipProps(HEAT_LABELS[index + 2])} />
+          <Hit
+            key={cls}
+            tip={{ title: HEAT_LABELS[index + 2] }}
+            focusable={false}
+            className={`inline-block h-3 w-3 rounded-[3px] ${cls}`}
+          />
         ))}
         <span>molte</span>
       </span>
@@ -188,23 +189,44 @@ export function HeatLegend() {
   );
 }
 
-/** «23/10: Debt», «20/05: The Raven King · 40 sottolineature», «Debt, Carrie (+1)». */
-function dayTip(day: string, entry: ReadingStats['readingDays'][string] | undefined): string {
-  const label = `${day.slice(8, 10)}/${day.slice(5, 7)}`;
-  if (!entry) return `${label}: nessuna lettura`;
-  const titles = entry.books.map((book) => book.title || 'Senza titolo');
-  let names = titles.slice(0, 2).join(', ');
-  if (titles.length > 2) names += ` (+${titles.length - 2})`;
-  const parts = [names, entry.highlights ? plural(entry.highlights, 'sottolineatura', 'sottolineature') : ''];
-  return `${label}: ${parts.filter(Boolean).join(' · ') || 'letto'}`;
+/** Suggerimento di un giorno: la data, i libri letti e le sottolineature. */
+function dayTip(day: string, entry: ReadingStats['readingDays'][string] | undefined): TipContent {
+  const title = formatDayLong(day);
+  if (!entry) return { title, lines: [{ text: 'Nessuna lettura' }] };
+  const lines = entry.books.slice(0, 4).map((book) => ({
+    text: `${book.title || 'Senza titolo'}${book.highlights ? ` · ${plural(book.highlights, 'sottolineatura', 'sottolineature')}` : ''}`,
+  }));
+  if (entry.books.length > 4) lines.push({ text: `e altre ${entry.books.length - 4}` });
+  if (entry.highlights > 0 && entry.books.length !== 1) {
+    lines.push({ text: `${plural(entry.highlights, 'sottolineatura', 'sottolineature')} in tutto` });
+  }
+  return { title, lines };
+}
+
+/** Elenco delle opere di un giorno del calendario, con le sottolineature di quel giorno. */
+export function daySpec(day: string, entry: ReadingStats['readingDays'][string]): ListSpec {
+  const highlights: Record<string, number> = {};
+  for (const book of entry.books) if (book.highlights > 0) highlights[book.id] = book.highlights;
+  return {
+    title: `giornata del ${formatDayLong(day)}`,
+    ids: entry.books.map((book) => book.id),
+    date: 'none',
+    order: 'title',
+    highlights,
+  };
 }
 
 /**
- * Un quadrato per giorno, una colonna per settimana (dal lunedi'), come le tavole.
- * Scorre in orizzontale dentro il suo riquadro e parte dalla fine (i giorni piu' recenti).
+ * Un quadrato per giorno, una colonna per settimana (dal lunedi'), come le tavole, con
+ * l'etichetta del mese sopra la colonna in cui comincia. Scorre in orizzontale dentro il suo
+ * riquadro e parte dalla fine (i giorni piu' recenti).
+ * Le ~300 celle non hanno gestori propri: tutto passa da un solo contenitore (delega degli
+ * eventi) e il suggerimento e' uno solo, quindi il passaggio non ridisegna la griglia.
  */
 export function HeatCalendar({ stats }: { stats: ReadingStats }) {
   const ref = useRef<HTMLDivElement>(null);
+  const touching = useRef(false);
+  const { openList } = useStatsUi();
   const { from, to, today } = stats.window;
   const last = to < today ? to : today;
   const first = dayTime(from);
@@ -212,14 +234,28 @@ export function HeatCalendar({ stats }: { stats: ReadingStats }) {
   const lead = (new Date(first).getUTCDay() + 6) % 7;
   const cells: ReactNode[] = [];
   for (let index = 0; index < lead; index += 1) cells.push(<span key={`b${index}`} />);
+  // Una sola cella e' nell'ordine del Tab (le frecce spostano il focus): l'ultimo giorno con letture.
+  const readDays = Object.keys(stats.readingDays).filter((day) => day <= last).sort();
+  const tabDay = readDays[readDays.length - 1] ?? last;
+  const labels: { text: string; column: number }[] = [];
   for (let time = first; time <= dayTime(last); time += DAY_MS) {
     const day = dayString(time);
     const entry = stats.readingDays[day];
+    if (day.endsWith('-01')) {
+      const month = Number(day.slice(5, 7));
+      labels.push({
+        text: MONTHS_SHORT[month - 1] + (month === 1 ? ` ’${day.slice(2, 4)}` : ''),
+        column: Math.floor((lead + (time - first) / DAY_MS) / 7),
+      });
+    }
     cells.push(
-      <span
+      <button
         key={day}
-        className={`h-[var(--c)] w-[var(--c)] rounded-[3px] ${HEAT_CLASSES[heatBucket(Boolean(entry), entry?.highlights ?? 0)]}`}
-        {...tipProps(dayTip(day, entry))}
+        type="button"
+        data-day={day}
+        tabIndex={day === tabDay ? 0 : -1}
+        aria-label={`${formatDayLong(day)}: ${entry ? 'letto' : 'nessuna lettura'}`}
+        className={`heat-cell block h-[var(--c)] w-[var(--c)] rounded-[3px] ${entry ? 'cursor-pointer' : 'cursor-default'} ${HEAT_CLASSES[heatBucket(Boolean(entry), entry?.highlights ?? 0)]}`}
       />,
     );
   }
@@ -227,13 +263,85 @@ export function HeatCalendar({ stats }: { stats: ReadingStats }) {
     const node = ref.current;
     if (node) node.scrollLeft = node.scrollWidth;
   }, [stats]);
+
+  const cellOf = (target: EventTarget) => (target as HTMLElement).closest<HTMLElement>('[data-day]');
+  const onMove = (event: PointerEvent<HTMLElement>) => {
+    if (event.pointerType === 'touch') return;
+    const cell = cellOf(event.target);
+    if (!cell) return hideTip();
+    const day = cell.dataset.day!;
+    showTipAt(cell, dayTip(day, stats.readingDays[day]), event.clientX, event.clientY);
+  };
+  const onClick = (event: MouseEvent<HTMLElement>) => {
+    const cell = cellOf(event.target);
+    if (!cell) return;
+    const day = cell.dataset.day!;
+    const entry = stats.readingDays[day];
+    const spec = entry && entry.books.length > 0 ? daySpec(day, entry) : null;
+    activateTip(
+      cell,
+      dayTip(day, entry),
+      spec
+        ? { label: `Vedi ${spec.ids.length} ${spec.ids.length === 1 ? 'opera' : 'opere'}`, run: () => openList(spec) }
+        : null,
+      touching.current,
+    );
+  };
+  const onFocus = (event: FocusEvent<HTMLElement>) => {
+    const cell = cellOf(event.target);
+    if (!cell) return;
+    // Il Tab resta su una sola cella: quella con il focus.
+    ref.current?.querySelector<HTMLElement>('[tabindex="0"]')?.setAttribute('tabindex', '-1');
+    cell.setAttribute('tabindex', '0');
+    if (isKeyboardFocus()) {
+      const day = cell.dataset.day!;
+      showTipOn(cell, dayTip(day, stats.readingDays[day]));
+    }
+  };
+  // Frecce: sinistra/destra = una settimana, su/giu' = un giorno.
+  const onKeyDown = (event: KeyboardEvent<HTMLElement>) => {
+    const step = { ArrowLeft: -7, ArrowRight: 7, ArrowUp: -1, ArrowDown: 1 }[event.key];
+    const cell = cellOf(event.target);
+    if (!step || !cell) return;
+    const next = ref.current?.querySelector<HTMLElement>(`[data-day="${addDays(cell.dataset.day!, step)}"]`);
+    if (!next) return;
+    event.preventDefault();
+    next.focus();
+  };
+
   return (
     <div ref={ref} className="overflow-x-auto pb-1">
       <div
-        className="grid w-max grid-flow-col gap-[3px] [--c:12px] sm:[--c:14px]"
-        style={{ gridTemplateRows: 'repeat(7, var(--c))', gridAutoColumns: 'var(--c)' }}
+        className="w-max [--c:12px] sm:[--c:14px]"
+        onPointerMove={onMove}
+        onPointerLeave={(event) => event.pointerType !== 'touch' && hideTip()}
+        onPointerDown={(event) => {
+          touching.current = event.pointerType === 'touch';
+        }}
+        onClick={onClick}
+        onFocus={onFocus}
+        onBlur={(event) => {
+          if (!touching.current) hideTip(cellOf(event.target) ?? undefined);
+        }}
+        onKeyDown={onKeyDown}
       >
-        {cells}
+        <div className="relative mb-1 h-4 text-[11px] text-[#6b655a]">
+          {labels.map((label) => (
+            <span
+              key={label.column}
+              className="absolute top-0 whitespace-nowrap"
+              style={{ left: `calc(${label.column} * (var(--c) + 3px))` }}
+            >
+              {label.text}
+            </span>
+          ))}
+        </div>
+        <div
+          className="grid grid-flow-col gap-[3px]"
+          style={{ gridTemplateRows: 'repeat(7, var(--c))', gridAutoColumns: 'var(--c)' }}
+        >
+          {cells}
+        </div>
       </div>
     </div>
   );

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef } from 'react';
-import { hideFanficsOf, libraryNameOf, useStore } from '../store';
+import { countActiveFilters, hideFanficsOf, libraryNameOf, useStore } from '../store';
 import type { QuickFilter } from '../store';
 import { SORT_LABELS, cn, initials } from '../utils';
 import type { SortKey } from '@shared/types';
@@ -66,14 +66,7 @@ export default function TopBar({
   const libraryInitials = initials(libraryName) || 'LM';
   const category = categoryFromFilters(filters);
 
-  const activeFilterCount = useMemo(
-    () =>
-      Object.values(filters).reduce<number>(
-        (total, value) => total + (Array.isArray(value) ? value.length : value ? 1 : 0),
-        0,
-      ),
-    [filters],
-  );
+  const activeFilterCount = useMemo(() => countActiveFilters(filters), [filters]);
 
   const submitSearch = () => {
     searchRef.current?.focus();

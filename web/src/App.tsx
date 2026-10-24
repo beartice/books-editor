@@ -1,5 +1,5 @@
 import { Suspense, lazy, useEffect, useMemo, useState } from 'react';
-import { hideFanficsOf, libraryNameOf, matchesQuickFilter, selectVisible, useStore } from './store';
+import { countActiveFilters, hideFanficsOf, libraryNameOf, matchesQuickFilter, selectVisible, useStore } from './store';
 import type { QuickFilter } from './store';
 import TopBar from './components/TopBar';
 import Sidebar from './components/Sidebar';
@@ -19,6 +19,7 @@ import {
   IconBook,
   IconBookmark,
   IconChevron,
+  IconClose,
   IconHeart,
   IconLayers,
   IconPlus,
@@ -55,12 +56,13 @@ export default function App() {
     setView,
     settingsOpen,
     setSettingsOpen,
+    statsOpen,
+    setStatsOpen,
   } = useStore();
   const libraryName = useStore(libraryNameOf);
   const [showImport, setShowImport] = useState(false);
   const [mobileFilters, setMobileFilters] = useState(false);
   const [seriesOpen, setSeriesOpen] = useState(false);
-  const [statsOpen, setStatsOpen] = useState(false);
   const [seriesInitial, setSeriesInitial] = useState<string | null>(null);
   const [page, setPage] = useState(1);
 
@@ -104,9 +106,7 @@ export default function App() {
     document.getElementById('library')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   };
 
-  const hasFilters =
-    query.length > 0 ||
-    Object.values(filters).some((value) => (Array.isArray(value) ? value.length > 0 : value));
+  const hasFilters = query.length > 0 || countActiveFilters(filters) > 0;
 
   const openImport = () => setShowImport(true);
   const openSettings = () => setSettingsOpen(true);
@@ -173,6 +173,16 @@ export default function App() {
                       <IconLayers className="h-4 w-4" />
                       Serie
                     </button>
+                    {filters.ids.length > 0 && (
+                      <button
+                        onClick={() => useStore.setState({ filters: { ...filters, ids: [], idsLabel: '' } })}
+                        className="chip chip-active min-h-9 cursor-pointer"
+                        aria-label={`Togli il filtro: ${filters.idsLabel}`}
+                      >
+                        {filters.idsLabel}
+                        <IconClose className="h-3 w-3" />
+                      </button>
+                    )}
                     {hasFilters && (
                       <button onClick={clearFilters} className="btn-ghost">
                         Azzera i filtri

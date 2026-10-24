@@ -143,3 +143,52 @@
     @apply text-[10px] font-semibold uppercase tracking-[0.22em] text-ink-500;
   }
 }
+
+/* Statistiche: elementi interattivi, evidenza al passaggio, cella del calendario. */
+@layer components {
+  .stats-hit {
+    /* I button hanno align-items: flex-start di sistema: i figli devono riempire la riga. */
+    align-items: stretch;
+    cursor: pointer;
+    transition: transform 0.12s ease, filter 0.12s ease, box-shadow 0.12s ease, background-color 0.12s ease;
+  }
+  .stats-hit:hover {
+    transform: translateY(-1px);
+    filter: brightness(0.96);
+  }
+  .stats-hit:focus-visible {
+    @apply outline-none ring-2 ring-accent-600 ring-offset-2;
+  }
+  /* Solo suggerimento, nessun clic. */
+  .stats-tip-only {
+    cursor: default;
+  }
+  .stats-tip-only:hover {
+    transform: none;
+  }
+  .stats-item {
+    transition: opacity 0.15s ease;
+  }
+  /* Al passaggio (o al focus da tastiera) su un elemento gli altri dello stesso grafico si attenuano. */
+  .stats-group:has(.stats-item:is(:hover, :focus-within)) .stats-item:not(:is(:hover, :focus-within)) {
+    opacity: 0.45;
+  }
+  /* Sulla legenda si attenua l'altra serie. */
+  [data-kind] {
+    transition: opacity 0.15s ease;
+  }
+  .stats-root:has(.legend-book:is(:hover, :focus-visible)) [data-kind='fanfic'],
+  .stats-root:has(.legend-fanfic:is(:hover, :focus-visible)) [data-kind='book'] {
+    opacity: 0.2;
+  }
+  .heat-cell {
+    transition: transform 0.1s ease, box-shadow 0.1s ease;
+  }
+  .heat-cell:hover,
+  .heat-cell:focus-visible {
+    transform: scale(1.35);
+    @apply outline-none ring-2 ring-ink-100/70;
+    position: relative;
+    z-index: 1;
+  }
+}

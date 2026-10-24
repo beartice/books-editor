@@ -35,6 +35,10 @@ export interface Filters {
   missingMetadata: boolean;
   /** Solo le fanfiction con nuovi capitoli (o completate) sul sito. */
   updatesOnly: boolean;
+  /** Solo queste opere (id), per gli elenchi che arrivano dalle statistiche. */
+  ids: string[];
+  /** Etichetta del filtro per id («Da statistiche: letture del 2024»). */
+  idsLabel: string;
 }
 
 export const EMPTY_FILTERS: Filters = {
@@ -49,7 +53,20 @@ export const EMPTY_FILTERS: Filters = {
   missingCover: false,
   missingMetadata: false,
   updatesOnly: false,
+  ids: [],
+  idsLabel: '',
 };
+
+/** Quanti filtri sono attivi: il filtro per id vale uno, qualunque sia il numero di opere. */
+export function countActiveFilters(filters: Filters): number {
+  let total = 0;
+  for (const [key, value] of Object.entries(filters)) {
+    if (key === 'idsLabel') continue;
+    if (key === 'ids') total += filters.ids.length > 0 ? 1 : 0;
+    else total += Array.isArray(value) ? value.length : value ? 1 : 0;
+  }
+  return total;
+}
 
 export interface Toast {
   id: number;
@@ -124,7 +141,8 @@ export function matchesQuickFilter(filters: Filters, quick: QuickFilter): boolea
     filters.authors.length === 0 &&
     filters.fandoms.length === 0 &&
     filters.series.length === 0 &&
-    filters.tags.length === 0;
+    filters.tags.length === 0 &&
+    filters.ids.length === 0;
 
   switch (quick) {
     case 'all':
@@ -236,6 +254,8 @@ interface State {
   lookupAttempted: boolean;
   /** Finestra delle impostazioni aperta (può essere aperta anche dal dettaglio). */
   settingsOpen: boolean;
+  /** Statistiche aperte: la scheda dell'opera deve stare sopra di loro. */
+  statsOpen: boolean;
   toasts: Toast[];
   /** Autenticazione: stato verificato con /auth/me, login richiesto, messaggio per la pagina di login. */
   authChecked: boolean;
@@ -281,6 +301,9 @@ interface State {
   /** «Segna come non letto», con conferma: azzera stato, avanzamento, data di fine e posizioni. */
   resetReading: () => Promise<void>;
   setSettingsOpen: (open: boolean) => void;
+  setStatsOpen: (open: boolean) => void;
+  /** Applica alla griglia un filtro che arriva dalle statistiche (sostituisce filtri e ricerca). */
+  applyStatsFilter: (filters: Partial<Filters>) => void;
   patchDetail: (patch: Partial<BookMeta>) => Promise<void>;
   runLookup: () => Promise<void>;
   importGoogleVolume: (url: string) => Promise<boolean>;
@@ -315,7 +338,19 @@ function matchesFilters(book: BookSummary, filters: Filters): boolean {
   if (filters.missingCover && book.coverFile) return false;
   if (filters.missingMetadata && book.authors.length && book.description) return false;
   if (filters.updatesOnly && !isFanficUpdateAvailable(book.fanficUpdate)) return false;
+  if (filters.ids.length && !idSetOf(filters.ids).has(book.id)) return false;
   return true;
+}
+
+// Il filtro per id puo' avere migliaia di voci: l'insieme si costruisce una volta per elenco.
+const idSets = new WeakMap<string[], Set<string>>();
+function idSetOf(ids: string[]): Set<string> {
+  let set = idSets.get(ids);
+  if (!set) {
+    set = new Set(ids);
+    idSets.set(ids, set);
+  }
+  return set;
 }
 
 export function selectVisible(state: {
@@ -411,6 +446,7 @@ export const useStore = create<State>((set, get) => ({
   lookupLoading: false,
   lookupAttempted: false,
   settingsOpen: false,
+  statsOpen: false,
   toasts: [],
   authChecked: false,
   authEnabled: false,
@@ -653,6 +689,8 @@ export const useStore = create<State>((set, get) => ({
   },
 
   setSettingsOpen: (settingsOpen) => set({ settingsOpen }),
+  setStatsOpen: (statsOpen) => set({ statsOpen }),
+  applyStatsFilter: (filters) => set({ filters: { ...EMPTY_FILTERS, ...filters }, query: '' }),
 
   // Il lettore ha una voce di cronologia propria: «Indietro», Esc e lo swipe di iOS lo chiudono.
   openReader: (id, file, location) => {

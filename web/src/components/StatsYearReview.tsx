@@ -15,8 +15,9 @@ import {
   monthName,
   numberFormat,
   plural,
-  tipProps,
 } from './StatsParts';
+import { DataTable, DataToggle, Hit, useDataView } from './StatsUi';
+import type { ListSpec } from './StatsUi';
 
 // Vista C «Il tuo anno»: poche schede grandi, con frasi generate dai dati dell'anno.
 
@@ -77,18 +78,28 @@ function BigNumber({ children, size = 56 }: { children: ReactNode; size?: number
   );
 }
 
-function FinishedCard({ stats }: { stats: ReadingStats }) {
+function FinishedCard({ stats, year }: { stats: ReadingStats; year: number }) {
   const { books, fanfics, total } = stats.reads.count;
+  const items = stats.reads.items;
+  const listOf = (title: string, kind?: 'book' | 'fanfic'): ListSpec => ({
+    title,
+    ids: items.filter((item) => !kind || (kind === 'fanfic') === (item.kind === 'fanfic')).map((item) => item.id),
+    date: 'finished',
+  });
+  const all = listOf(`letture del ${year}`);
   return (
     <div className="flex min-h-[220px] flex-col justify-between gap-6 rounded-[28px] bg-accent-600 p-6 text-white sm:min-h-[280px] sm:p-8 lg:col-span-5">
       <span className="text-[13px] font-semibold text-accent-100">Letture finite</span>
       <div className="flex flex-col gap-2.5">
-        <span
-          className="text-[88px] font-semibold leading-[0.9] sm:text-[120px]"
-          style={serif}
+        <Hit
+          tip={{ title: `Letture finite nel ${year}`, lines: [{ text: plural(total, 'lettura', 'letture') }] }}
+          list={all}
+          className="self-start rounded-xl text-left"
         >
-          {total}
-        </span>
+          <span className="block text-[88px] font-semibold leading-[0.9] sm:text-[120px]" style={serif}>
+            {total}
+          </span>
+        </Hit>
         <span className="text-base text-accent-50">
           {stats.hasFanfics && fanfics > 0
             ? `${plural(books, 'libro', 'libri')} e ${fanfics} fanfiction`
@@ -96,12 +107,28 @@ function FinishedCard({ stats }: { stats: ReadingStats }) {
         </span>
       </div>
       {total > 0 && (
-        <div
-          className="flex h-3 gap-[2px] overflow-hidden rounded-md"
-          {...tipProps(`${plural(books, 'libro', 'libri')}${stats.hasFanfics ? `, ${fanfics} fanfiction` : ''}`)}
-        >
-          {books > 0 && <div style={{ flex: books, background: BOOK_COLOR }} />}
-          {stats.hasFanfics && fanfics > 0 && <div style={{ flex: fanfics, background: FANFIC_COLOR }} />}
+        <div className="stats-group flex h-3 gap-[2px] overflow-hidden rounded-md">
+          {books > 0 && (
+            <Hit
+              data-kind="book"
+              tip={{ title: `Libri letti nel ${year}`, lines: [{ color: BOOK_COLOR, text: plural(books, 'libro', 'libri') }] }}
+              list={listOf(`libri letti nel ${year}`, 'book')}
+              className="stats-item block h-full"
+              style={{ flex: books, background: BOOK_COLOR }}
+            />
+          )}
+          {stats.hasFanfics && fanfics > 0 && (
+            <Hit
+              data-kind="fanfic"
+              tip={{
+                title: `Fanfiction lette nel ${year}`,
+                lines: [{ color: FANFIC_COLOR, text: plural(fanfics, 'fanfiction', 'fanfiction') }],
+              }}
+              list={listOf(`fanfiction lette nel ${year}`, 'fanfic')}
+              className="stats-item block h-full"
+              style={{ flex: fanfics, background: FANFIC_COLOR }}
+            />
+          )}
         </div>
       )}
     </div>
@@ -125,6 +152,12 @@ function FactCards({ stats, year }: { stats: ReadingStats; year: number }) {
   const five = tiles.period.fiveStars;
   const rated = tiles.period.rated;
   const ratio = read ? five / read : 0;
+  // «La piu' veloce»: le letture con inizio noto, dalla piu' breve.
+  const byPace = reads.items
+    .filter((item) => item.days !== null)
+    .sort((a, b) => (a.days ?? 0) - (b.days ?? 0) || a.end.localeCompare(b.end));
+  const paceNotes: Record<string, string> = {};
+  for (const item of byPace) paceNotes[item.id] = formatDaysValue(item.days ?? 0).toLowerCase();
   let fiveText = 'Nessuna lettura ha un voto.';
   if (rated > 0) {
     if (five === 0) fiveText = `Nessuna lettura da cinque stelle nel ${year}.`;
@@ -135,7 +168,14 @@ function FactCards({ stats, year }: { stats: ReadingStats; year: number }) {
   }
   return (
     <div className="grid grid-cols-1 gap-3.5 sm:grid-cols-2 lg:col-span-7">
-      <div className={`${cardBase} border border-[#ebe5d9] bg-white`}>
+      <Hit
+        tip={{
+          title: 'Tempo tipico per finire',
+          lines: [{ text: median === null ? 'Manca la data di inizio' : `Mediana ${formatDaysValue(median).toLowerCase()}` }],
+        }}
+        list={{ title: `letture del ${year}, dalla più veloce`, ids: byPace.map((item) => item.id), order: 'given', notes: paceNotes }}
+        className={`${cardBase} border border-[#ebe5d9] bg-white text-left`}
+      >
         <span className="text-[13px] font-semibold text-[#6b655a]">Tempo tipico per finire</span>
         <BigNumber>{median === null ? '—' : formatDaysValue(median)}</BigNumber>
         <span className="text-sm text-ink-300">
@@ -145,8 +185,12 @@ function FactCards({ stats, year }: { stats: ReadingStats; year: number }) {
               ? 'Metà delle letture finisce lo stesso giorno in cui comincia.'
               : `Metà delle letture finisce entro ${daysPhrase(median)}.`}
         </span>
-      </div>
-      <div className={`${cardBase} bg-coral-100`}>
+      </Hit>
+      <Hit
+        tip={{ title: 'In un giorno solo', lines: [{ text: plural(sameDay.length, 'lettura', 'letture') }] }}
+        list={{ title: `iniziate e finite lo stesso giorno nel ${year}`, ids: sameDay.map((item) => item.id), date: 'finished' }}
+        className={`${cardBase} bg-coral-100 text-left`}
+      >
         <span className="text-[13px] font-semibold text-[#7a3a22]">In un giorno solo</span>
         <BigNumber>{sameDay.length}</BigNumber>
         <span className="text-sm text-[#5b3a2c]">
@@ -156,8 +200,15 @@ function FactCards({ stats, year }: { stats: ReadingStats; year: number }) {
                 sameDay.length === 1 ? 'iniziata e finita' : 'iniziate e finite'
               } lo stesso giorno.`}
         </span>
-      </div>
-      <div className={`${cardBase} border border-[#ebe5d9] bg-white`}>
+      </Hit>
+      <Hit
+        tip={{
+          title: 'La lettura più lunga',
+          lines: [{ text: longest && longest.days !== null ? `${longest.title}: ${plural(longest.days, 'giorno', 'giorni')}` : 'Servono letture con la data di inizio' }],
+        }}
+        book={longest && longest.days !== null && longest.start ? { id: longest.id } : undefined}
+        className={`${cardBase} border border-[#ebe5d9] bg-white text-left`}
+      >
         <span className="text-[13px] font-semibold text-[#6b655a]">La lettura più lunga</span>
         {longest && longest.days !== null && longest.start ? (
           <>
@@ -174,22 +225,33 @@ function FactCards({ stats, year }: { stats: ReadingStats; year: number }) {
             <span className="text-sm text-ink-300">Servono letture con la data di inizio.</span>
           </>
         )}
-      </div>
-      <div className={`${cardBase} border border-[#ebe5d9] bg-white`}>
+      </Hit>
+      <Hit
+        tip={{ title: 'Cinque stelle', lines: [{ text: rated > 0 ? `${five} su ${read} letture` : 'Nessuna lettura ha un voto' }] }}
+        list={{ title: `cinque stelle nel ${year}`, ids: stats.ids.fiveStars, date: 'finished' }}
+        className={`${cardBase} border border-[#ebe5d9] bg-white text-left`}
+      >
         <span className="text-[13px] font-semibold text-[#6b655a]">Cinque stelle</span>
         <BigNumber>{rated > 0 ? `${five} su ${read}` : '—'}</BigNumber>
         <span className="text-sm text-ink-300">{fiveText}</span>
-      </div>
+      </Hit>
     </div>
   );
 }
 
 function HighlightsCard({ stats, year }: { stats: ReadingStats; year: number }) {
+  const [table, toggleTable] = useDataView();
   const months = stats.highlightsByMonth;
   const busiest = stats.busiestMonth;
   const record = stats.recordDay;
   const max = Math.max(...months.map((item) => item.count), 1);
   const plot = 160;
+  const listOf = (item: ReadingStats['highlightsByMonth'][number]): ListSpec => ({
+    title: `sottolineate ${inMonth(item.month)} ${year}`,
+    ids: item.ids,
+    date: 'none',
+    tab: 'highlights',
+  });
   const title =
     busiest && isConcentrated(stats)
       ? `${seasonOf(busiest.month).the} delle sottolineature`
@@ -205,46 +267,67 @@ function HighlightsCard({ stats, year }: { stats: ReadingStats; year: number }) 
             {stats.readingDaysCount > 0 && ` · ${plural(stats.readingDaysCount, 'giornata di lettura', 'giornate di lettura')} nell'anno`}
           </p>
         </div>
-        {busiest && record && (
-          <div className="flex flex-wrap gap-x-6 gap-y-2">
-            <div className="flex flex-col">
-              <span className="text-xs font-semibold text-[#6b655a]">Mese più intenso</span>
-              <span className="text-lg font-semibold">
-                {capitalize(monthName(busiest.month))} · {numberFormat.format(busiest.count)} in {plural(busiest.days, 'giorno', 'giorni')}
-              </span>
-            </div>
-            <div className="flex flex-col">
-              <span className="text-xs font-semibold text-[#6b655a]">Giorno record</span>
-              <span className="text-lg font-semibold">
-                {formatDayMonth(record.date)} · {numberFormat.format(record.count)}
-              </span>
-            </div>
-          </div>
-        )}
+        <div className="flex flex-wrap items-end gap-x-6 gap-y-2">
+          {busiest && record && (
+            <>
+              <div className="flex flex-col">
+                <span className="text-xs font-semibold text-[#6b655a]">Mese più intenso</span>
+                <span className="text-lg font-semibold">
+                  {capitalize(monthName(busiest.month))} · {numberFormat.format(busiest.count)} in {plural(busiest.days, 'giorno', 'giorni')}
+                </span>
+              </div>
+              <div className="flex flex-col">
+                <span className="text-xs font-semibold text-[#6b655a]">Giorno record</span>
+                <span className="text-lg font-semibold">
+                  {formatDayMonth(record.date)} · {numberFormat.format(record.count)}
+                </span>
+              </div>
+            </>
+          )}
+          {stats.highlightsTotal > 0 && <DataToggle table={table} onToggle={toggleTable} />}
+        </div>
       </div>
       {stats.highlightsTotal === 0 ? (
         <EmptyNote>Nessuna sottolineatura nel {year}.</EmptyNote>
+      ) : table ? (
+        <DataTable
+          caption={title}
+          head={['Mese', 'Sottolineature', 'Giorni']}
+          rows={months.map((item) => ({
+            key: item.month,
+            label: capitalize(monthName(item.month)),
+            cells: [item.count, item.days],
+            list: listOf(item),
+          }))}
+        />
       ) : (
         <>
           <div
-            className="grid items-end gap-1.5 border-b border-ink-700 sm:gap-2.5"
+            className="stats-group grid items-end gap-1.5 border-b border-ink-700 sm:gap-2.5"
             style={{ gridTemplateColumns: `repeat(${months.length}, minmax(0, 1fr))`, height: plot + 40 }}
           >
             {months.map((item) => (
-              <div
+              <Hit
                 key={item.month}
-                className="flex h-full flex-col items-center justify-end gap-1"
-                {...tipProps(`${capitalize(monthName(item.month))} ${year}: ${plural(item.count, 'sottolineatura', 'sottolineature')}`)}
+                tip={{
+                  title: `${capitalize(monthName(item.month))} ${year}`,
+                  lines: [
+                    { color: BOOK_COLOR, text: plural(item.count, 'sottolineatura', 'sottolineature') },
+                    ...(item.days ? [{ text: `in ${plural(item.days, 'giorno', 'giorni')}` }] : []),
+                  ],
+                }}
+                list={listOf(item)}
+                className="stats-item flex h-full flex-col items-center justify-end gap-1"
               >
                 <span className="text-[11px] font-semibold text-ink-100 sm:text-[13px]">{item.count}</span>
-                <div
-                  className="w-full max-w-[72px] rounded-t-md"
+                <span
+                  className="block w-full max-w-[72px] rounded-t-md"
                   style={{
                     height: Math.max(2, (item.count / max) * plot),
                     background: busiest && item.month === busiest.month ? '#235347' : '#94bfa9',
                   }}
                 />
-              </div>
+              </Hit>
             ))}
           </div>
           <div
@@ -267,7 +350,15 @@ function AddedCard({ stats, year }: { stats: ReadingStats; year: number }) {
   const { total, busiest } = stats.added;
   const concentrated = busiest && total >= 5 && busiest.count / total >= 0.3 && busiest.count < total;
   return (
-    <div className={`${cardBase} bg-accent-50`}>
+    <Hit
+      tip={{ title: 'Nuove in libreria', lines: [{ text: plural(total, 'opera aggiunta', 'opere aggiunte') }] }}
+      list={{
+        title: `aggiunte alla libreria nel ${year}`,
+        ids: stats.added.byMonth.flatMap((item) => item.ids),
+        date: 'added',
+      }}
+      className={`${cardBase} bg-accent-50 text-left`}
+    >
       <span className="text-[13px] font-semibold text-accent-700">Nuove in libreria</span>
       <BigNumber>{numberFormat.format(total)}</BigNumber>
       <span className="text-sm text-accent-700">
@@ -277,7 +368,7 @@ function AddedCard({ stats, year }: { stats: ReadingStats; year: number }) {
               concentrated && busiest ? `, ${busiest.count} solo ${inMonth(busiest.month)}` : ''
             }.`}
       </span>
-    </div>
+    </Hit>
   );
 }
 
@@ -289,23 +380,31 @@ function TitlesCard({ stats, year }: { stats: ReadingStats; year: number }) {
       {items.length === 0 ? (
         <EmptyNote>Nessuna lettura con data di fine nel {year}.</EmptyNote>
       ) : (
-        <div className="flex flex-wrap gap-2">
+        <div className="stats-group flex flex-wrap gap-2">
           {items.map((item) => (
-            <span
+            <Hit
               key={item.id}
-              className={`flex min-h-10 max-w-full items-center gap-2 rounded-full px-3 text-[13.5px] text-ink-100 sm:min-h-0 sm:py-2 ${
+              data-kind={item.kind === 'fanfic' ? 'fanfic' : 'book'}
+              tip={{
+                title: item.title,
+                lines: [
+                  {
+                    color: item.kind === 'fanfic' ? FANFIC_COLOR : BOOK_COLOR,
+                    text: `${item.start ? formatDaySlash(item.start) : '?'} → ${formatDaySlash(item.end)}`,
+                  },
+                ],
+              }}
+              book={{ id: item.id }}
+              className={`stats-item flex min-h-10 max-w-full items-center gap-2 rounded-full px-3 text-[13.5px] text-ink-100 sm:min-h-0 sm:py-2 ${
                 item.kind === 'fanfic' ? 'bg-coral-50' : 'bg-ink-800'
               }`}
-              {...tipProps(
-                `${item.title}: ${item.start ? formatDaySlash(item.start) : '?'} → ${formatDaySlash(item.end)}`,
-              )}
             >
               <span
                 className="h-2 w-2 shrink-0 rounded-full"
                 style={{ background: item.kind === 'fanfic' ? FANFIC_COLOR : BOOK_COLOR }}
               />
               <span className="truncate">{item.title}</span>
-            </span>
+            </Hit>
           ))}
         </div>
       )}
@@ -336,7 +435,7 @@ export default function StatsYearReview({ stats, year }: { stats: ReadingStats; 
       ) : (
         <>
           <section className="grid grid-cols-1 gap-3.5 lg:grid-cols-12">
-            <FinishedCard stats={stats} />
+            <FinishedCard stats={stats} year={year} />
             <FactCards stats={stats} year={year} />
           </section>
           <HighlightsCard stats={stats} year={year} />

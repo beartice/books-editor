@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { describeFilter, hideFanficsOf, libraryNameOf, matchesQuickFilter, useStore } from '../store';
+import { countActiveFilters, describeFilter, hideFanficsOf, libraryNameOf, matchesQuickFilter, useStore } from '../store';
 import type { Filters, QuickFilter } from '../store';
 import { cn, formatNumber } from '../utils';
 import { READING_STATUSES, isFanficUpdateAvailable } from '@shared/types';
@@ -120,10 +120,7 @@ export default function Sidebar({
     };
   }, [books]);
 
-  const activeCount = Object.values(filters).reduce(
-    (total, value) => total + (Array.isArray(value) ? value.length : value ? 1 : 0),
-    0,
-  );
+  const activeCount = countActiveFilters(filters);
 
   const toggle = (group: keyof Filters, value: string) => toggleFilter(group, value);
 

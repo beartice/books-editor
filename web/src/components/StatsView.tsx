@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { MouseEvent } from 'react';
 import type { ReadingStats } from '@shared/types';
 import { api } from '../api';
 import { useStore } from '../store';
@@ -7,7 +6,10 @@ import { IconClose } from './icons';
 import StatsDashboard from './StatsDashboard';
 import StatsDiary from './StatsDiary';
 import StatsYearReview from './StatsYearReview';
+import StatsList from './StatsList';
 import { EmptyNote } from './StatsParts';
+import { StatsTooltip, StatsUiProvider, hideTip } from './StatsUi';
+import type { ListSpec } from './StatsUi';
 
 interface Props {
   onClose: () => void;
@@ -73,9 +75,12 @@ export default function StatsView({ onClose }: Props) {
   const [tab, setTab] = useState<Tab>(readStoredTab);
   const [period, setPeriod] = useState<Period>('all');
   const [yearsKnown, setYearsKnown] = useState<number[]>([]);
-  const [tipText, setTipText] = useState('');
-  const tipTimer = useRef<number>();
+  // Elenco di opere aperto dal clic su un numero (null = chiuso).
+  const [list, setList] = useState<ListSpec | null>(null);
+  const listRef = useRef<ListSpec | null>(null);
+  listRef.current = list;
   const scroller = useRef<HTMLDivElement>(null);
+  const root = useRef<HTMLDivElement>(null);
 
   // «Il tuo anno» con «Sempre» racconta l'anno in corso.
   const currentYear = new Date().getFullYear();
@@ -104,15 +109,30 @@ export default function StatsView({ onClose }: Props) {
   }, [onClose]);
 
   useEffect(() => {
+    // Esc chiude un livello alla volta: prima la scheda dell'opera (se ne occupa il suo pannello),
+    // poi l'elenco, poi le statistiche.
     const onKey = (event: KeyboardEvent) => {
       if (event.key !== 'Escape') return;
+      if (useStore.getState().selectedId) return;
       event.preventDefault();
       event.stopImmediatePropagation();
-      close();
+      hideTip();
+      if (listRef.current) setList(null);
+      else close();
     };
     window.addEventListener('keydown', onKey, true);
     return () => window.removeEventListener('keydown', onKey, true);
   }, [close]);
+
+  // Il focus entra nella vista (il Tab riparte da qui, non dalla libreria sotto) e torna a chi
+  // l'aveva alla chiusura.
+  useEffect(() => {
+    const previous = document.activeElement as HTMLElement | null;
+    root.current?.focus({ preventScroll: true });
+    return () => {
+      if (previous && document.contains(previous)) previous.focus({ preventScroll: true });
+    };
+  }, []);
 
   // Schermo bloccato sotto la vista: niente scroll della pagina sottostante.
   useEffect(() => {
@@ -125,6 +145,7 @@ export default function StatsView({ onClose }: Props) {
 
   const chooseTab = (next: Tab) => {
     setTab(next);
+    setList(null);
     try {
       window.localStorage.setItem(TAB_KEY, next);
     } catch {
@@ -133,13 +154,22 @@ export default function StatsView({ onClose }: Props) {
     scroller.current?.scrollTo({ top: 0 });
   };
 
-  // Su touch non c'e' il passaggio del mouse: il tocco su un elemento mostra lo stesso suggerimento.
-  const onTap = (event: MouseEvent) => {
-    if (!window.matchMedia('(hover: none)').matches) return;
-    const target = (event.target as HTMLElement).closest<HTMLElement>('[data-tip]');
-    window.clearTimeout(tipTimer.current);
-    setTipText(target?.dataset.tip ?? '');
-    if (target) tipTimer.current = window.setTimeout(() => setTipText(''), 4000);
+  const openBook = useCallback((id: string, bookTab?: 'highlights') => {
+    // La scheda si apre sopra le statistiche, che restano sotto (e con loro l'elenco).
+    void useStore.getState().select(id);
+    useStore.getState().setDetailTab(bookTab ?? 'details');
+  }, []);
+
+  const ui = useMemo(() => ({ openList: setList, openBook }), [openBook]);
+
+  // «Mostra nella libreria»: filtro equivalente se esiste, altrimenti per id con la sua etichetta.
+  const showInLibrary = () => {
+    if (!list) return;
+    useStore.getState().applyStatsFilter(
+      list.filter ?? { ids: list.ids, idsLabel: `Da statistiche: ${list.title}` },
+    );
+    close();
+    window.setTimeout(() => document.getElementById('library')?.scrollIntoView({ block: 'start' }), 80);
   };
 
   const periods = useMemo<Period[]>(() => ['all', ...yearsKnown], [yearsKnown]);
@@ -148,83 +178,80 @@ export default function StatsView({ onClose }: Props) {
   const white = tab === 'dashboard';
 
   return (
-    <div
-      role="dialog"
-      aria-modal="true"
-      aria-label="Statistiche di lettura"
-      className={`fixed inset-0 z-50 flex animate-fade-in flex-col ${white ? 'bg-white' : 'bg-[#f4f0e7]'}`}
-      onClick={onTap}
-    >
-      <div className="shrink-0 border-b border-black/[0.05]">
-        <div className="mx-auto flex w-full max-w-[1200px] flex-wrap items-center gap-x-3 gap-y-2 px-4 py-3 sm:px-6">
-          <div role="tablist" className="flex gap-1.5 rounded-full border border-ink-700 bg-white p-1">
-            {TABS.map((item) => (
-              <button
-                key={item.id}
-                role="tab"
-                aria-selected={tab === item.id}
-                onClick={() => chooseTab(item.id)}
-                className={pillClass(tab === item.id)}
-              >
-                {item.label}
-              </button>
-            ))}
-          </div>
-          <div className="order-last -mx-4 flex w-[calc(100%+2rem)] gap-1.5 overflow-x-auto px-4 no-scrollbar sm:-mx-6 sm:w-[calc(100%+3rem)] sm:px-6 lg:order-none lg:mx-0 lg:w-auto lg:flex-1 lg:justify-center lg:px-0">
-            {periods.map((item) => (
-              <button
-                key={item}
-                onClick={() => setPeriod(item)}
-                aria-pressed={period === item}
-                className={`${pillClass(period === item)} ${
-                  period === item ? '' : 'border border-ink-700 bg-white'
-                }`}
-              >
-                {item === 'all' ? 'Sempre' : item}
-              </button>
-            ))}
-          </div>
-          <button
-            onClick={close}
-            className="btn-subtle ml-auto h-10 w-10 shrink-0 px-0 lg:ml-0"
-            aria-label="Chiudi statistiche"
-          >
-            <IconClose />
-          </button>
-        </div>
-      </div>
-
-      <div ref={scroller} className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-contain">
-        <div className="mx-auto w-full max-w-[1160px] px-4 pb-20 pt-6 sm:px-6 sm:pt-10">
-          {error && !ready ? (
-            <div className="flex flex-col items-start gap-3">
-              <EmptyNote>{error}</EmptyNote>
-              <button onClick={retry} className="btn-ghost min-h-10">
-                Riprova
-              </button>
+    <StatsUiProvider value={ui}>
+      <div
+        ref={root}
+        tabIndex={-1}
+        role="dialog"
+        aria-modal="true"
+        aria-label="Statistiche di lettura"
+        className={`stats-root fixed inset-0 z-50 flex outline-none animate-fade-in flex-col ${white ? 'bg-white' : 'bg-[#f4f0e7]'}`}
+      >
+        <div className="shrink-0 border-b border-black/[0.05]">
+          <div className="mx-auto flex w-full max-w-[1200px] flex-wrap items-center gap-x-3 gap-y-2 px-4 py-3 sm:px-6">
+            <div role="tablist" className="flex gap-1.5 rounded-full border border-ink-700 bg-white p-1">
+              {TABS.map((item) => (
+                <button
+                  key={item.id}
+                  role="tab"
+                  aria-selected={tab === item.id}
+                  onClick={() => chooseTab(item.id)}
+                  className={pillClass(tab === item.id)}
+                >
+                  {item.label}
+                </button>
+              ))}
             </div>
-          ) : !ready ? (
-            <p className="py-10 text-center text-sm text-ink-400">Carico le statistiche…</p>
-          ) : isEmpty ? (
-            <EmptyNote>La libreria è vuota: aggiungi qualche opera per vedere le statistiche.</EmptyNote>
-          ) : tab === 'diary' ? (
-            <StatsDiary stats={ready} selected={selected} />
-          ) : tab === 'dashboard' ? (
-            <StatsDashboard stats={ready} selected={selected} />
-          ) : (
-            <StatsYearReview stats={ready} year={requested as number} />
-          )}
+            <div className="order-last -mx-4 flex w-[calc(100%+2rem)] gap-1.5 overflow-x-auto px-4 no-scrollbar sm:-mx-6 sm:w-[calc(100%+3rem)] sm:px-6 lg:order-none lg:mx-0 lg:w-auto lg:flex-1 lg:justify-center lg:px-0">
+              {periods.map((item) => (
+                <button
+                  key={item}
+                  onClick={() => setPeriod(item)}
+                  aria-pressed={period === item}
+                  className={`${pillClass(period === item)} ${
+                    period === item ? '' : 'border border-ink-700 bg-white'
+                  }`}
+                >
+                  {item === 'all' ? 'Sempre' : item}
+                </button>
+              ))}
+            </div>
+            <button
+              onClick={close}
+              className="btn-subtle ml-auto h-10 w-10 shrink-0 px-0 lg:ml-0"
+              aria-label="Chiudi statistiche"
+            >
+              <IconClose />
+            </button>
+          </div>
         </div>
-      </div>
 
-      {tipText && (
-        <div
-          role="status"
-          className="pointer-events-none fixed inset-x-4 bottom-4 z-10 mx-auto w-fit max-w-[min(92vw,420px)] rounded-xl bg-ink-100 px-3.5 py-2 text-center text-[13px] text-white shadow-panel"
-        >
-          {tipText}
+        <div ref={scroller} className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-contain">
+          <div className="mx-auto w-full max-w-[1160px] px-4 pb-20 pt-6 sm:px-6 sm:pt-10">
+            {error && !ready ? (
+              <div className="flex flex-col items-start gap-3">
+                <EmptyNote>{error}</EmptyNote>
+                <button onClick={retry} className="btn-ghost min-h-10">
+                  Riprova
+                </button>
+              </div>
+            ) : !ready ? (
+              <p className="py-10 text-center text-sm text-ink-400">Carico le statistiche…</p>
+            ) : isEmpty ? (
+              <EmptyNote>La libreria è vuota: aggiungi qualche opera per vedere le statistiche.</EmptyNote>
+            ) : tab === 'diary' ? (
+              <StatsDiary stats={ready} selected={selected} />
+            ) : tab === 'dashboard' ? (
+              <StatsDashboard stats={ready} selected={selected} />
+            ) : (
+              <StatsYearReview stats={ready} year={requested as number} />
+            )}
+          </div>
         </div>
-      )}
-    </div>
+
+        {list && <StatsList spec={list} onClose={() => setList(null)} onOpenBook={openBook} onShowInLibrary={showInLibrary} />}
+        <StatsTooltip />
+      </div>
+    </StatsUiProvider>
   );
 }

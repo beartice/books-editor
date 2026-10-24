@@ -677,6 +677,8 @@ export interface ReadingStatsBucket {
   key: 'same' | 'short' | 'week' | 'month' | 'long';
   label: string;
   count: number;
+  /** Opere dietro il numero (per l'elenco che si apre dal clic). */
+  ids: string[];
 }
 
 export interface ReadingStatsMonth {
@@ -685,6 +687,8 @@ export interface ReadingStatsMonth {
   count: number;
   /** Giorni distinti con almeno una sottolineatura. */
   days: number;
+  /** Opere sottolineate nel mese. */
+  ids: string[];
 }
 
 /** Risposta di `GET /api/stats/reading`. */
@@ -716,7 +720,18 @@ export interface ReadingStats {
     };
   };
   /** Opere lette per anno di fine, dal piu' vecchio al piu' recente, senza buchi. */
-  byYear: { year: number; books: number; fanfics: number }[];
+  byYear: { year: number; books: number; fanfics: number; bookIds: string[]; fanficIds: string[] }[];
+  /** Le opere dietro i numeri di stato e del periodo (per l'elenco che si apre dal clic). */
+  ids: {
+    read: string[];
+    reading: string[];
+    dnf: string[];
+    unread: string[];
+    /** Lette nel periodo (con `all`: come `read`). */
+    periodRead: string[];
+    /** Da cinque stelle fra le opere del periodo. */
+    fiveStars: string[];
+  };
   /** Quante opere lette hanno la data di fine, e quante sono lette in tutto. */
   withFinishDate: number;
   readTotal: number;
@@ -736,7 +751,7 @@ export interface ReadingStats {
    * Giornate di lettura nella finestra (registro delle letture + giorni delle
    * sottolineature): libri letti quel giorno e sottolineature fatte.
    */
-  readingDays: Record<string, { books: { id: string; title: string }[]; highlights: number }>;
+  readingDays: Record<string, { books: { id: string; title: string; highlights: number }[]; highlights: number }>;
   readingDaysCount: number;
   highlightsByMonth: ReadingStatsMonth[];
   highlightsTotal: number;
@@ -744,14 +759,14 @@ export interface ReadingStats {
   recordDay: { date: string; count: number } | null;
   busiestMonth: ReadingStatsMonth | null;
   topHighlighted: { id: string; title: string; count: number }[];
-  topAuthors: { name: string; count: number }[];
+  topAuthors: { name: string; count: number; ids: string[] }[];
   /** Voti delle opere del periodo, da 0,5 a 5. */
-  ratingDistribution: { value: number; count: number }[];
-  genres: { genre: string; count: number }[];
+  ratingDistribution: { value: number; count: number; ids: string[] }[];
+  genres: { genre: string; count: number; ids: string[] }[];
   reading: {
     total: number;
     items: { id: string; title: string; kind: BookKind; progress: number }[];
   };
   /** Opere aggiunte nella finestra (data di Apple Books se c'e', altrimenti `dateAdded`). */
-  added: { total: number; byMonth: { month: string; count: number }[]; busiest: { month: string; count: number } | null };
+  added: { total: number; byMonth: { month: string; count: number; ids: string[] }[]; busiest: { month: string; count: number } | null };
 }

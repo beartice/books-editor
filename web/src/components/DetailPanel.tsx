@@ -260,6 +260,8 @@ export default function DetailPanel({
 }) {
   const { detail, select, patchDetail, detailTab, setDetailTab, busy, openReader, resetReading } = useStore();
   const { lookupAttempted, runLookup } = useStore();
+  // Aperta dalle statistiche (z-50) deve stare sopra di loro.
+  const statsOpen = useStore((state) => state.statsOpen);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [downloading, setDownloading] = useState<string | null>(null);
   const [confirmWrite, setConfirmWrite] = useState(false);
@@ -575,7 +577,7 @@ export default function DetailPanel({
   };
 
   return (
-    <div className="fixed inset-0 z-40 flex justify-end">
+    <div className={`fixed inset-0 flex justify-end ${statsOpen ? 'z-[56]' : 'z-40'}`}>
       <div
         className="absolute inset-0 bg-ink-950/25 backdrop-blur-[2px] animate-fade-in"
         onClick={() => select(null)}

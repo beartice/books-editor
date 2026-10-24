@@ -139,12 +139,22 @@ export function computeReadingStats(
   const reading = emptySplit();
   const dnf = emptySplit();
   const unread = emptySplit();
+  const stateIds = { read: [] as string[], reading: [] as string[], dnf: [] as string[], unread: [] as string[] };
   for (const book of books) {
     addToSplit(total, book);
-    if (isRead(book)) addToSplit(read, book);
-    else if (book.readingStatus === 'reading') addToSplit(reading, book);
-    else if (book.readingStatus === 'dnf') addToSplit(dnf, book);
-    else addToSplit(unread, book);
+    if (isRead(book)) {
+      addToSplit(read, book);
+      stateIds.read.push(book.id);
+    } else if (book.readingStatus === 'reading') {
+      addToSplit(reading, book);
+      stateIds.reading.push(book.id);
+    } else if (book.readingStatus === 'dnf') {
+      addToSplit(dnf, book);
+      stateIds.dnf.push(book.id);
+    } else {
+      addToSplit(unread, book);
+      stateIds.unread.push(book.id);
+    }
   }
 
   // Opere lette del periodo: con un anno scelto servono la data di fine in quell'anno.
@@ -162,32 +172,41 @@ export function computeReadingStats(
     words += book.wordCount ?? 0;
   }
   // Voti: con `all` tutte le opere votate (anche non lette), con un anno quelle lette in quell'anno.
-  const ratings = (year === 'all' ? books : periodRead)
-    .map(ratingOf)
-    .filter((value): value is number => value !== null);
-  const ratingCounts = new Array<number>(RATING_STEPS.length).fill(0);
-  for (const rating of ratings) {
-    ratingCounts[Math.min(RATING_STEPS.length - 1, Math.max(0, Math.round(rating * 2) - 1))] += 1;
+  const ratedBooks = (year === 'all' ? books : periodRead).filter((book) => ratingOf(book) !== null);
+  const ratings = ratedBooks.map((book) => ratingOf(book) as number);
+  const ratingIds: string[][] = RATING_STEPS.map(() => []);
+  for (const book of ratedBooks) {
+    const rating = ratingOf(book) as number;
+    ratingIds[Math.min(RATING_STEPS.length - 1, Math.max(0, Math.round(rating * 2) - 1))].push(book.id);
   }
+  const fiveStarIds = ratedBooks.filter((book) => (ratingOf(book) as number) >= 5).map((book) => book.id);
 
   // Letture per anno di fine (sempre su tutto il tempo), senza buchi.
-  const yearCounts = new Map<number, { books: number; fanfics: number }>();
+  const yearCounts = new Map<number, { books: number; fanfics: number; bookIds: string[]; fanficIds: string[] }>();
   let withFinishDate = 0;
   for (const book of readBooks) {
     const day = finishedDay(book);
     if (!day) continue;
     withFinishDate += 1;
     const key = Number(day.slice(0, 4));
-    const entry = yearCounts.get(key) ?? { books: 0, fanfics: 0 };
-    if (book.kind === 'fanfic') entry.fanfics += 1;
-    else entry.books += 1;
+    const entry = yearCounts.get(key) ?? { books: 0, fanfics: 0, bookIds: [], fanficIds: [] };
+    if (book.kind === 'fanfic') {
+      entry.fanfics += 1;
+      entry.fanficIds.push(book.id);
+    } else {
+      entry.books += 1;
+      entry.bookIds.push(book.id);
+    }
     yearCounts.set(key, entry);
   }
   const byYear: ReadingStats['byYear'] = [];
   if (yearCounts.size) {
     const years = [...yearCounts.keys()];
     for (let current = Math.min(...years); current <= Math.max(...years); current += 1) {
-      byYear.push({ year: current, ...(yearCounts.get(current) ?? { books: 0, fanfics: 0 }) });
+      byYear.push({
+        year: current,
+        ...(yearCounts.get(current) ?? { books: 0, fanfics: 0, bookIds: [], fanficIds: [] }),
+      });
     }
   }
 
@@ -212,12 +231,16 @@ export function computeReadingStats(
   const readsCount = emptySplit();
   for (const item of items) addToSplit(readsCount, item);
   const durations = items.map((item) => item.days).filter((value): value is number => value !== null);
+  const bucketOf = (key: ReadingStatsBucket['key'], label: string, test: (days: number) => boolean) => {
+    const ids = items.filter((item) => item.days !== null && test(item.days)).map((item) => item.id);
+    return { key, label, count: ids.length, ids };
+  };
   const buckets: ReadingStatsBucket[] = [
-    { key: 'same', label: 'Stesso giorno', count: durations.filter((d) => d === 0).length },
-    { key: 'short', label: '1–2 giorni', count: durations.filter((d) => d >= 1 && d <= 2).length },
-    { key: 'week', label: '3–7 giorni', count: durations.filter((d) => d >= 3 && d <= 7).length },
-    { key: 'month', label: '8–30 giorni', count: durations.filter((d) => d >= 8 && d <= 30).length },
-    { key: 'long', label: 'Oltre un mese', count: durations.filter((d) => d > 30).length },
+    bucketOf('same', 'Stesso giorno', (d) => d === 0),
+    bucketOf('short', '1–2 giorni', (d) => d >= 1 && d <= 2),
+    bucketOf('week', '3–7 giorni', (d) => d >= 3 && d <= 7),
+    bucketOf('month', '8–30 giorni', (d) => d >= 8 && d <= 30),
+    bucketOf('long', 'Oltre un mese', (d) => d > 30),
   ];
   let longest: ReadingStatsRead | null = null;
   for (const item of items) {
@@ -226,12 +249,23 @@ export function computeReadingStats(
 
   // Sottolineature di tutti i libri, per giorno (nella finestra) e per libro.
   const highlightsByDay: Record<string, number> = {};
+  // Sottolineature per giorno e per libro (nella finestra) e libri sottolineati per mese.
+  const dayBookHighlights = new Map<string, Map<string, number>>();
+  const monthBookIds = new Map<string, Set<string>>();
   const perBook = new Map<string, { id: string; title: string; count: number }>();
   for (const book of books) {
     for (const highlight of book.highlights ?? []) {
       // Giorno nel fuso del server, come il registro delle giornate di lettura.
       const day = localDayOf(highlight.createdAt);
-      if (inWindow(day)) highlightsByDay[day] = (highlightsByDay[day] ?? 0) + 1;
+      if (inWindow(day)) {
+        highlightsByDay[day] = (highlightsByDay[day] ?? 0) + 1;
+        const perDay = dayBookHighlights.get(day) ?? new Map<string, number>();
+        perDay.set(book.id, (perDay.get(book.id) ?? 0) + 1);
+        dayBookHighlights.set(day, perDay);
+        const inMonthIds = monthBookIds.get(monthOf(day)) ?? new Set<string>();
+        inMonthIds.add(book.id);
+        monthBookIds.set(monthOf(day), inMonthIds);
+      }
       // Con un anno contano solo quelle fatte nell'anno; con `all` tutte, anche senza data.
       if (year !== 'all' && !(day && day.startsWith(`${year}-`))) continue;
       const entry = perBook.get(book.id) ?? { id: book.id, title: book.title || 'Senza titolo', count: 0 };
@@ -246,7 +280,9 @@ export function computeReadingStats(
   const dayEntry = (day: string) => (readingDays[day] ??= { books: [], highlights: 0 });
   const addBook = (day: string, id: string) => {
     const entry = dayEntry(day);
-    if (!entry.books.some((item) => item.id === id)) entry.books.push({ id, title: titles.get(id) ?? '' });
+    if (!entry.books.some((item) => item.id === id)) {
+      entry.books.push({ id, title: titles.get(id) ?? '', highlights: dayBookHighlights.get(day)?.get(id) ?? 0 });
+    }
   };
   for (const [day, logged] of Object.entries(log.days)) {
     if (!inWindow(day) || day > today) continue;
@@ -284,6 +320,7 @@ export function computeReadingStats(
   const highlightsByMonth: ReadingStatsMonth[] = months.map((month) => ({
     month,
     ...(monthStats.get(month) ?? { count: 0, days: 0 }),
+    ids: [...(monthBookIds.get(month) ?? [])],
   }));
   let busiestMonth: ReadingStatsMonth | null = null;
   for (const entry of highlightsByMonth) {
@@ -291,13 +328,18 @@ export function computeReadingStats(
   }
 
   // Autori e generi delle opere lette nel periodo.
-  const authorCounts = new Map<string, number>();
-  const genreCounts = new Map<string, number>();
+  const authorBooks = new Map<string, string[]>();
+  const genreBooks = new Map<string, string[]>();
+  const pushId = (map: Map<string, string[]>, key: string, id: string) => {
+    const list = map.get(key);
+    if (list) list.push(id);
+    else map.set(key, [id]);
+  };
   for (const book of periodRead) {
     for (const author of new Set(book.authors.map((name) => name.trim()).filter(Boolean))) {
-      authorCounts.set(author, (authorCounts.get(author) ?? 0) + 1);
+      pushId(authorBooks, author, book.id);
     }
-    for (const genre of bookGenres(book.tags)) genreCounts.set(genre, (genreCounts.get(genre) ?? 0) + 1);
+    for (const genre of bookGenres(book.tags)) pushId(genreBooks, genre, book.id);
   }
 
   // In lettura: i piu' avanzati.
@@ -313,19 +355,24 @@ export function computeReadingStats(
     .sort((a, b) => b.progress - a.progress || a.title.localeCompare(b.title, 'it'));
 
   // Aggiunte alla libreria: data di Apple Books se c'e', altrimenti quella di inserimento.
-  const addedMonths = new Map<string, number>(months.map((month) => [month, 0]));
+  const addedMonths = new Map<string, string[]>(months.map((month) => [month, []]));
   let addedTotal = 0;
   for (const book of books) {
     const day = dayOf(book.appleDates?.addedAt) ?? dayOf(book.dateAdded);
     if (!inWindow(day)) continue;
     const month = monthOf(day);
-    addedMonths.set(month, (addedMonths.get(month) ?? 0) + 1);
+    pushId(addedMonths, month, book.id);
     addedTotal += 1;
   }
-  const addedByMonth = months.map((month) => ({ month, count: addedMonths.get(month) ?? 0 }));
+  const addedByMonth = months.map((month) => {
+    const ids = addedMonths.get(month) ?? [];
+    return { month, count: ids.length, ids };
+  });
   let addedBusiest: { month: string; count: number } | null = null;
   for (const entry of addedByMonth) {
-    if (entry.count > 0 && (addedBusiest === null || entry.count > addedBusiest.count)) addedBusiest = entry;
+    if (entry.count > 0 && (addedBusiest === null || entry.count > addedBusiest.count)) {
+      addedBusiest = { month: entry.month, count: entry.count };
+    }
   }
 
   return {
@@ -349,6 +396,7 @@ export function computeReadingStats(
       },
     },
     byYear,
+    ids: { ...stateIds, periodRead: periodRead.map((book) => book.id), fiveStars: fiveStarIds },
     withFinishDate,
     readTotal: readBooks.length,
     reads: {
@@ -368,13 +416,17 @@ export function computeReadingStats(
     recordDay,
     busiestMonth,
     topHighlighted: [...perBook.values()].sort(byCountThenName((item) => item.title)).slice(0, 4),
-    topAuthors: [...authorCounts.entries()]
-      .map(([name, count]) => ({ name, count }))
+    topAuthors: [...authorBooks.entries()]
+      .map(([name, ids]) => ({ name, count: ids.length, ids }))
       .sort(byCountThenName((item) => item.name))
       .slice(0, 6),
-    ratingDistribution: RATING_STEPS.map((value, index) => ({ value, count: ratingCounts[index] })),
-    genres: [...genreCounts.entries()]
-      .map(([genre, count]) => ({ genre, count }))
+    ratingDistribution: RATING_STEPS.map((value, index) => ({
+      value,
+      count: ratingIds[index].length,
+      ids: ratingIds[index],
+    })),
+    genres: [...genreBooks.entries()]
+      .map(([genre, ids]) => ({ genre, count: ids.length, ids }))
       .sort(byCountThenName((item) => item.genre))
       .slice(0, 12),
     reading: { total: reading.total, items: inProgress.slice(0, 6) },
