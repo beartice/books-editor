@@ -1134,23 +1134,35 @@ export async function registerApi(app: FastifyInstance): Promise<void> {
 
   /* ----------------------------------------------------------- libreria -- */
   /* --------------------------------------------------------------- EFP -- */
-  app.post<{ Body: { url?: string } }>('/api/efp/import', async (request, reply) => {
-    const url = request.body?.url?.trim();
-    if (!url) return reply.code(400).send({ error: 'Incolla il link di una storia EFP.' });
-    try {
-      const result = await importEfpStory(url);
-      await syncAppleBooksForBooks([result.book.id]);
-      const book = (await getBookMeta(result.book.id)) ?? result.book;
-      return {
-        book,
-        created: result.created,
-        chapters: result.story.chapters.length,
-        words: result.story.wordCount,
-      };
-    } catch (error) {
-      return reply.code(400).send({ error: (error as Error).message });
-    }
-  });
+  app.post<{ Body: { url?: string; mode?: 'update' | 'new' } }>(
+    '/api/efp/import',
+    async (request, reply) => {
+      const url = request.body?.url?.trim();
+      if (!url) return reply.code(400).send({ error: 'Incolla il link di una storia EFP.' });
+      const mode = request.body?.mode;
+      if (mode !== undefined && mode !== 'update' && mode !== 'new') {
+        return reply.code(400).send({ error: 'Modalita\' di import non valida.' });
+      }
+      try {
+        const result = await importEfpStory(url, { mode });
+        if ('duplicate' in result) {
+          return reply
+            .code(409)
+            .send({ ...duplicateReply(result.duplicate), ...(result.canUpdate ? { canUpdate: true } : {}) });
+        }
+        await syncAppleBooksForBooks([result.book.id]);
+        const book = (await getBookMeta(result.book.id)) ?? result.book;
+        return {
+          book,
+          created: result.created,
+          chapters: result.story.chapters.length,
+          words: result.story.wordCount,
+        };
+      } catch (error) {
+        return reply.code(400).send({ error: (error as Error).message });
+      }
+    },
+  );
 
   app.post<{ Body: { url?: string; format?: 'odt' | 'epub' } }>(
     '/api/efp/download',

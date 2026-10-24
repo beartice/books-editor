@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { api, ApiError, tooLargeMessage } from '../api';
-import type { JellyfinImportState, JellyfinLibrary, JellyfinPreview } from '../api';
+import type { EfpImportResult, JellyfinImportState, JellyfinLibrary, JellyfinPreview } from '../api';
 import type { BookMeta, BookSummary, ConversionSupport } from '@shared/types';
 import { syncAppleBooksFromApp } from '../desktop';
 import { libraryNameOf, useStore } from '../store';
@@ -149,6 +149,7 @@ export default function ImportDialog({ onClose }: Props) {
     const reasons: Record<string, string> = {
       file: 'stesso file',
       isbn: 'stesso ISBN',
+      source: 'stessa fonte, stesso link',
       title: 'stesso titolo e autore',
     };
     const answer = await confirm(
@@ -238,11 +239,48 @@ export default function ImportDialog({ onClose }: Props) {
     if (!value) return;
     setEfpBusy('import');
     try {
-      const result = await api.importEfp(value);
+      let mode: 'update' | 'new' | undefined;
+      let result: EfpImportResult | null = null;
+      while (!result) {
+        try {
+          result = await api.importEfp(value, mode);
+        } catch (error) {
+          const body =
+            error instanceof ApiError && error.status === 409
+              ? (error.body as {
+                  duplicate?: { reason: string; book: BookSummary };
+                  canUpdate?: boolean;
+                } | null)
+              : null;
+          if (!body?.duplicate) throw error;
+          // Storia gia' presente: si chiede se aggiornarla o importarla come copia.
+          const { book, reason } = body.duplicate;
+          const reasons: Record<string, string> = {
+            source: 'stessa storia EFP',
+            title: 'stesso titolo e autore',
+          };
+          const authors = book.authors?.length ? ` di ${book.authors.join(', ')}` : '';
+          const answer = await confirm(
+            `«${book.title}»${authors} è già nella libreria (${reasons[reason] ?? reason}).`,
+            body.canUpdate
+              ? [
+                  { label: 'Aggiorna la storia esistente', value: 'update', primary: true },
+                  { label: 'Importa come nuova copia', value: 'new' },
+                  { label: 'Annulla', value: 'cancel' },
+                ]
+              : [
+                  { label: 'Importa comunque', value: 'new', primary: true },
+                  { label: 'Annulla', value: 'cancel' },
+                ],
+          );
+          if (answer !== 'update' && answer !== 'new') return;
+          mode = answer;
+        }
+      }
       await load();
       void syncAppleBooksFromApp([result.book.id]);
       toast(
-        `${result.created ? 'Importata' : 'Aggiornata'} "${result.book.title}" · ${result.chapters} capitoli`,
+        `${result.created ? 'Storia importata' : 'Storia aggiornata'}: "${result.book.title}" · ${result.chapters} capitoli`,
         'success',
       );
       await select(result.book.id);

@@ -4,6 +4,7 @@ import path from 'node:path';
 import type { SKRSContext2D } from '@napi-rs/canvas';
 import {
   emptyMeta,
+  findDuplicateInIndex,
   sanitizeFolderName,
   uniqueFolderName,
   updateBook,
@@ -12,6 +13,7 @@ import {
 import { loadIndex, loadSettings, saveIndex } from './store.js';
 import { normalizeTags } from './tags.js';
 import type { BookMeta } from '../../shared/types.js';
+import type { DuplicateMatch } from './library.js';
 import {
   EPUB_TEXT_CSS,
   OdtTextStyles,
@@ -1069,22 +1071,60 @@ function capitalize(value: string): string {
   return value ? value.charAt(0).toUpperCase() + value.slice(1) : '';
 }
 
-export async function importEfpStory(input: string): Promise<EfpImportResult> {
-  const story = await loadEfpStory(input);
+/** Scheda gia' presente per la stessa storia EFP (stesso sid o stesso link). */
+function findSameEfpStory(story: EfpStory, index: BookMeta[]): BookMeta | undefined {
+  return index.find((book) => book.identifiers?.efp === story.sid || book.efpUrl === story.url);
+}
+
+/**
+ * Decide se una storia EFP si puo' importare come nuova o se esiste gia':
+ * stesso sid o link (si puo' aggiornare), oppure stessa fonte / stesso titolo e autore.
+ */
+export function decideEfpImport(
+  story: Pick<EfpStory, 'sid' | 'url' | 'title' | 'author'>,
+  index: BookMeta[],
+): 'new' | { duplicate: DuplicateMatch; canUpdate: boolean } {
+  const same = findSameEfpStory(story as EfpStory, index);
+  if (same) return { duplicate: { reason: 'source', book: same }, canUpdate: true };
+  const found = findDuplicateInIndex(index, {
+    title: story.title,
+    authors: story.author ? [story.author] : [],
+    efpUrl: story.url,
+    identifiers: { efp: story.sid },
+  });
+  return found ? { duplicate: found, canUpdate: false } : 'new';
+}
+
+/**
+ * Importa una storia EFP. Senza `mode`, se la storia e' gia' in libreria non
+ * scrive nulla e restituisce il duplicato; 'update' aggiorna la scheda con lo
+ * stesso sid, 'new' importa comunque come nuova scheda.
+ */
+export async function importEfpStory(
+  input: string,
+  options: { mode?: 'update' | 'new'; load?: (input: string) => Promise<EfpStory> } = {},
+): Promise<EfpImportResult | { duplicate: DuplicateMatch; canUpdate: boolean }> {
+  const story = await (options.load ?? loadEfpStory)(input);
+  const settings = await loadSettings();
+  const index = await loadIndex();
+
+  let existing: BookMeta | undefined;
+  if (options.mode === 'update') {
+    existing = findSameEfpStory(story, index);
+    if (!existing) throw new Error('Non c\'è una storia EFP da aggiornare.');
+  } else if (options.mode !== 'new') {
+    const decision = decideEfpImport(story, index);
+    if (decision !== 'new') return decision;
+  }
+
   const cover = await renderCover(story);
   const epub = await buildEpub(story, cover);
   const odt = await buildOdt(story, cover);
-  const settings = await loadSettings();
-  const index = await loadIndex();
 
   const baseName = story.author ? `${story.author} - ${story.title}` : story.title;
   const fileBase = safeFileName(story.title);
   const epubName = `${fileBase}.epub`;
   const odtName = `${fileBase}.odt`;
-
-  const existing = index.find(
-    (book) => book.identifiers?.efp === story.sid || book.efpUrl === story.url,
-  );
 
   if (existing) {
     const folderPath = path.join(settings.libraryRoot, existing.folder);

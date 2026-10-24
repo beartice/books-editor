@@ -370,10 +370,10 @@ export const api = {
         ...(options.attachTo ? { attachTo: options.attachTo } : {}),
       }),
     }),
-  importEfp: (url: string) =>
+  importEfp: (url: string, mode?: 'update' | 'new') =>
     request<EfpImportResult>('/efp/import', {
       method: 'POST',
-      body: JSON.stringify({ url }),
+      body: JSON.stringify({ url, ...(mode ? { mode } : {}) }),
     }),
   downloadEfp: (url: string, format: 'odt' | 'epub' = 'odt') =>
     requestBlob('/efp/download', {

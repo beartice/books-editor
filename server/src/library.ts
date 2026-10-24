@@ -545,7 +545,7 @@ export async function uniqueFolderName(root: string, base: string): Promise<stri
 
 export interface DuplicateMatch {
   /** 'language' = stessa opera ma in un'altra lingua: si puo' aggiungere come edizione. */
-  reason: 'file' | 'isbn' | 'title' | 'language';
+  reason: 'file' | 'isbn' | 'source' | 'title' | 'language';
   book: BookMeta;
   /** Solo per 'language': lingua del file e lingue gia' presenti nella scheda. */
   language?: string;
@@ -631,9 +631,12 @@ export async function findDuplicate(
     title: built.title,
     authors: built.authors,
     isbn: built.isbn,
+    ao3Url: built.ao3Url,
+    ffnetUrl: built.ffnetUrl,
+    identifiers: built.identifiers,
   });
-  // Stessa edizione (ISBN): non e' un'altra lingua.
-  if (byMeta?.reason === 'isbn') return byMeta;
+  // Stessa edizione (ISBN) o stessa fonte di una fanfic: non e' un'altra lingua.
+  if (byMeta?.reason === 'isbn' || byMeta?.reason === 'source') return byMeta;
 
   // Stessa opera in un'altra lingua: solo se la lingua del file e' nota e la
   // scheda non ha gia' un'edizione in quella lingua.
@@ -741,19 +744,77 @@ export function findSameWork(
 }
 
 /**
- * Controlli sui soli metadati (ISBN, poi titolo e primo autore normalizzati):
- * usato anche per valutare un libro prima di averne il file.
+ * Chiavi stabili della fonte di una fanfic: `ao3:<idOpera>`, `ffnet:<idStoria>`,
+ * `efp:<sid>` (il sid EFP canonico e' quello del primo capitolo). Si ricavano
+ * dai link (anche /chapters/..., http, www, query) e dagli identificatori.
  */
-export async function findDuplicateByMeta(meta: {
-  title?: string;
-  authors?: string[];
-  isbn?: string;
-}): Promise<DuplicateMatch | null> {
-  const index = await loadIndex();
+export function fanficSourceKeys(meta: {
+  ao3Url?: string;
+  ffnetUrl?: string;
+  efpUrl?: string;
+  identifiers?: Record<string, string>;
+}): string[] {
+  const keys = new Set<string>();
+  const fromText = (value: string | undefined) => {
+    if (!value) return;
+    const ao3 = value.match(/archiveofourown\.org\/(?:[^\s?#]*\/)?works\/(\d+)/i);
+    if (ao3) keys.add(`ao3:${ao3[1]}`);
+    const ffnet = value.match(/fanfiction\.net\/s\/(\d+)/i);
+    if (ffnet) keys.add(`ffnet:${ffnet[1]}`);
+    const efp = value.match(/efpfanfic\.net\/viewstory\.php\?(?:[^\s#]*&)?sid=(\d+)/i);
+    if (efp) keys.add(`efp:${efp[1]}`);
+  };
+  fromText(meta.ao3Url);
+  fromText(meta.ffnetUrl);
+  fromText(meta.efpUrl);
+  for (const [name, value] of Object.entries(meta.identifiers ?? {})) {
+    fromText(value);
+    // L'identificatore EFP salvato dall'import e' il solo sid.
+    if (name.toLowerCase() === 'efp' && /^\d+$/.test((value ?? '').trim())) {
+      keys.add(`efp:${value.trim()}`);
+    }
+  }
+  return [...keys];
+}
+
+/** Due fanfic con una fonte diversa sulla stessa piattaforma sono opere diverse. */
+function sourcesConflict(a: string[], b: string[]): boolean {
+  return a.some((keyA) => {
+    const site = keyA.split(':')[0];
+    const same = b.filter((keyB) => keyB.startsWith(`${site}:`));
+    return same.length > 0 && !same.includes(keyA);
+  });
+}
+
+/**
+ * Cerca un'opera equivalente nell'indice dato (sincrono): ISBN, poi stessa fonte
+ * (fanfic), poi titolo e primo autore. Con titolo e autore uguali ma fonte diversa
+ * sulla stessa piattaforma (due opere AO3 con id diversi) non e' un duplicato.
+ */
+export function findDuplicateInIndex(
+  index: BookMeta[],
+  meta: {
+    title?: string;
+    authors?: string[];
+    isbn?: string;
+    ao3Url?: string;
+    ffnetUrl?: string;
+    efpUrl?: string;
+    identifiers?: Record<string, string>;
+  },
+): DuplicateMatch | null {
   const isbn = normalizeIsbn(meta.isbn ?? '');
   if (isbn) {
     const found = index.find((book) => normalizeIsbn(book.isbn) === isbn);
     if (found) return { reason: 'isbn', book: found };
+  }
+
+  const keys = fanficSourceKeys(meta);
+  if (keys.length) {
+    const found = index.find((book) =>
+      fanficSourceKeys(book).some((key) => keys.includes(key)),
+    );
+    if (found) return { reason: 'source', book: found };
   }
 
   const title = normalizeText(meta.title ?? '');
@@ -762,11 +823,28 @@ export async function findDuplicateByMeta(meta: {
     const found = index.find(
       (book) =>
         normalizeText(book.title ?? '') === title &&
-        normalizeText(book.authors?.[0] ?? '') === author,
+        normalizeText(book.authors?.[0] ?? '') === author &&
+        !sourcesConflict(keys, fanficSourceKeys(book)),
     );
     if (found) return { reason: 'title', book: found };
   }
   return null;
+}
+
+/**
+ * Controlli sui soli metadati (ISBN, fonte, poi titolo e primo autore normalizzati):
+ * usato anche per valutare un libro prima di averne il file.
+ */
+export async function findDuplicateByMeta(meta: {
+  title?: string;
+  authors?: string[];
+  isbn?: string;
+  ao3Url?: string;
+  ffnetUrl?: string;
+  efpUrl?: string;
+  identifiers?: Record<string, string>;
+}): Promise<DuplicateMatch | null> {
+  return findDuplicateInIndex(await loadIndex(), meta);
 }
 
 /**
