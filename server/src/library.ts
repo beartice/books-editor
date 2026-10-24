@@ -1393,6 +1393,7 @@ export async function mergeBooks(targetId: string, otherId: string): Promise<Mer
     // Avanzamento e data di fine accompagnano lo stato scelto.
     merged.readingProgress = winner.readingProgress;
     merged.dateFinished = winner.dateFinished;
+    merged.dateStarted = winner.dateStarted ?? null;
   }
 
   merged.favorite = Boolean(target.favorite || other.favorite);

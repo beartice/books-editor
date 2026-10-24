@@ -375,7 +375,7 @@ export default function DetailPanel({
     {
       key: 'extra',
       title: 'Personale',
-      fields: ['tags', 'notes', 'readingStatus', 'readingProgress', 'dateFinished'],
+      fields: ['tags', 'notes', 'readingStatus', 'readingProgress', 'dateStarted', 'dateFinished'],
     },
   ];
 
@@ -959,6 +959,7 @@ export default function DetailPanel({
                 {(meta.readingStatus !== 'unread' ||
                   meta.readingProgress != null ||
                   meta.dateFinished ||
+                  meta.dateStarted ||
                   Object.keys(meta.readingPositions ?? {}).length > 0) && (
                   <button
                     onClick={() => void resetReading()}
@@ -1046,13 +1047,14 @@ export default function DetailPanel({
                               />
                             </FieldRow>
                           );
+                        case 'dateStarted':
                         case 'dateFinished':
                           return (
                             <FieldRow key={field} label={label}>
                               <TextField
                                 value={((value as string) ?? '').slice(0, 10)}
                                 onCommit={(next) =>
-                                  commit({ dateFinished: next || null })
+                                  commit({ [field]: next || null } as Partial<BookMeta>)
                                 }
                                 type="date"
                               />

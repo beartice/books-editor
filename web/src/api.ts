@@ -13,6 +13,7 @@ import type {
   FanficCheckState,
   HighlightColor,
   LibraryStats,
+  ReadingStats,
   LibrarySummary,
   LookupResult,
   MetadataCandidate,
@@ -252,6 +253,8 @@ export const api = {
     }),
 
   books: () => request<{ books: BookSummary[]; stats: LibraryStats }>('/books'),
+  /** Statistiche di lettura: un anno (AAAA) oppure `all`. */
+  readingStats: (year: number | 'all') => request<ReadingStats>(`/stats/reading?year=${year}`),
   book: (id: string) => request<BookMeta>(`/books/${id}`),
   updateBook: (id: string, patch: Partial<BookMeta>) =>
     request<BookMeta>(`/books/${id}`, { method: 'PATCH', body: JSON.stringify(patch) }),

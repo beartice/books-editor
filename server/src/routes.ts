@@ -58,6 +58,7 @@ import { lookupFanficPage, lookupGoogleVolume, lookupOnline } from './providers/
 import { getCoverThumbnail, removeCoverThumbnails } from './thumbnails.js';
 import { lookupSeries, readCachedSeries } from './providers/series.js';
 import { readSeriesTotals, writeSeriesTotal } from './seriesCache.js';
+import { computeReadingStats, localDay } from './readingStats.js';
 import { compareLocations, importAppleBooks, importAppleBooksFromRows, syncAppleBooksForBooks } from './appleBooks.js';
 import { AppleBooksInputError, parseAppleBooksInput } from './appleBooksInput.js';
 import { buildEpubWithMetadata, writeEpubMetadata } from './epubWrite.js';
@@ -787,6 +788,8 @@ export async function registerApi(app: FastifyInstance): Promise<void> {
       if (book.readingStatus === 'unread' && book.fieldSource?.readingStatus !== 'manual') {
         patch.readingStatus = 'reading';
       }
+      // Primo salvataggio: la lettura inizia oggi (se l'inizio non e' gia' noto).
+      if (!book.dateStarted) patch.dateStarted = localDay();
       try {
         await updateBook(book.id, patch, 'file', { touch: false });
       } catch (error) {
@@ -804,15 +807,19 @@ export async function registerApi(app: FastifyInstance): Promise<void> {
    */
   app.post<{ Params: { id: string } }>('/api/books/:id/reset-reading', async (request, reply) => {
     try {
+      const current = await getBookMeta(request.params.id);
+      const patch: Partial<BookMeta> = {
+        readingStatus: 'unread',
+        readingProgress: null,
+        dateFinished: null,
+        readingPositions: {},
+        readingProgressUpdatedAt: new Date().toISOString(),
+      };
+      // Anche l'inizio si azzera, tranne se l'utente lo ha scritto a mano.
+      if (current && current.fieldSource?.dateStarted !== 'manual') patch.dateStarted = null;
       return await updateBook(
         request.params.id,
-        {
-          readingStatus: 'unread',
-          readingProgress: null,
-          dateFinished: null,
-          readingPositions: {},
-          readingProgressUpdatedAt: new Date().toISOString(),
-        },
+        patch,
         'file',
         { touch: false, clearSources: ['readingStatus'] },
       );
@@ -1423,6 +1430,18 @@ export async function registerApi(app: FastifyInstance): Promise<void> {
   );
 
   app.get('/api/stats', async () => statsFor(visibleBooks(currentLibrary(), await loadIndex())));
+
+  /** Statistiche di lettura per la vista «Statistiche»: `year` e' un anno (AAAA) oppure `all`. */
+  app.get<{ Querystring: { year?: string } }>('/api/stats/reading', async (request, reply) => {
+    const raw = (request.query.year ?? 'all').trim();
+    const year = raw === 'all' ? 'all' : /^\d{4}$/.test(raw) ? Number(raw) : null;
+    if (year === null || (year !== 'all' && (year < 1900 || year > 2200))) {
+      return reply.code(400).send({ error: 'Anno non valido: indica un anno (AAAA) oppure «all»' });
+    }
+    const settings = await loadSettings();
+    const visible = visibleBooks(currentLibrary(), await loadIndex());
+    return computeReadingStats(visible, year, settings.wordsPerHour);
+  });
 }
 
 /** Campi che l'utente puo' modificare a mano. */
@@ -1459,6 +1478,7 @@ function pickAllowed(body: Partial<BookMeta>): Partial<BookMeta> {
     'favorite',
     'readingStatus',
     'readingProgress',
+    'dateStarted',
     'dateFinished',
     'lastRead',
     'folder',

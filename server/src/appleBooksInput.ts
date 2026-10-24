@@ -92,6 +92,10 @@ export function parseAppleBooksInput(body: unknown): {
     checkField(row, 'finishedAt', MAX_SHORT, where, true);
     checkField(row, 'readingProgress', MAX_SHORT, where, true);
     checkField(row, 'lastOpenedAt', MAX_SHORT, where, true);
+    // Facoltativi: le vecchie app Mac non li mandano.
+    checkField(row, 'addedAt', MAX_SHORT, where, true);
+    checkField(row, 'lastEngagedAt', MAX_SHORT, where, true);
+    checkField(row, 'firstOpenedAt', MAX_SHORT, where, true);
   });
 
   return {

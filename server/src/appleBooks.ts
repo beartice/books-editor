@@ -31,6 +31,14 @@ interface AppleBook {
   readingProgress: number | null;
   /** Ultima apertura in Apple Books (ISO), vuota se Apple non la fornisce. */
   lastOpenedAt: string;
+  /** Annotazione piu' vecchia di qualunque tipo (ISO): la prima apertura del libro. */
+  firstOpenedAt: string;
+  /** Aggiunta del libro ad Apple Books (ISO). */
+  addedAt: string;
+  /** Ultimo utilizzo del libro in Apple Books (ISO). */
+  lastEngagedAt: string;
+  /** Prima sottolineatura importata (ISO), vuota se non ce ne sono. */
+  firstHighlightAt: string;
 }
 
 interface MatchPair {
@@ -305,6 +313,13 @@ function buildAppleBooks(
       finishedAt,
       readingProgress,
       lastOpenedAt: appleDate(row?.lastOpenedAt),
+      firstOpenedAt: appleDate(row?.firstOpenedAt),
+      addedAt: appleDate(row?.addedAt),
+      lastEngagedAt: appleDate(row?.lastEngagedAt),
+      firstHighlightAt: highlighted
+        .map((highlight) => highlight.createdAt)
+        .filter(Boolean)
+        .sort()[0] ?? '',
     });
   }
   return books.sort(
@@ -363,6 +378,22 @@ function assignMatches(
   return selected;
 }
 
+/**
+ * Inizio stimato della lettura (AAAA-MM-GG): la data piu' vecchia fra la prima apertura e
+ * la prima sottolineatura. Vuota se Apple non ne da' nessuna, oppure se cade dopo la
+ * fine: la sincronizzazione iCloud a volte ricrea le date dopo che il libro e' finito.
+ */
+function startedFrom(apple: AppleBook, finished: string | null | undefined): string {
+  const days = [apple.firstOpenedAt, apple.firstHighlightAt]
+    .map((value) => value.slice(0, 10))
+    .filter(Boolean)
+    .sort();
+  const started = days[0] ?? '';
+  if (!started) return '';
+  if (finished && started > finished.slice(0, 10)) return '';
+  return started;
+}
+
 function sameHighlights(left: BookHighlight[], right: BookHighlight[]): boolean {
   return JSON.stringify(left) === JSON.stringify(right);
 }
@@ -401,6 +432,7 @@ export async function importAppleBooksFromRows(
   let imported = 0;
   let booksUpdated = 0;
   let finishedDates = 0;
+  let startedDates = 0;
   let progressBooks = 0;
 
   for (const { book, apple, titleRank } of matches) {
@@ -453,7 +485,26 @@ export async function importAppleBooksFromRows(
         patch.readingStatus = 'reading';
       }
     }
+    // Le date di Apple si conservano nella scheda (aggiunta alla libreria, prima apertura).
+    const appleDates = {
+      addedAt: apple.addedAt,
+      firstOpenedAt: apple.firstOpenedAt,
+      lastEngagedAt: apple.lastEngagedAt,
+    };
+    if (JSON.stringify(book.appleDates ?? null) !== JSON.stringify(appleDates)) {
+      patch.appleDates = appleDates;
+    }
+    // L'inizio segue le stesse regole della data di fine; quello scritto a mano non si tocca.
+    if (titleRank > 0 && !readerWins && book.fieldSource?.dateStarted !== 'manual') {
+      const started = startedFrom(apple, patch.dateFinished ?? book.dateFinished);
+      if (started) {
+        if ((book.dateStarted ?? null) !== started) patch.dateStarted = started;
+        startedDates += 1;
+      }
+    }
     const changed =
+      patch.appleDates !== undefined ||
+      patch.dateStarted !== undefined ||
       !sameHighlights(book.highlights ?? [], next) ||
       book.identifiers?.applebooks !== apple.assetId ||
       (patch.dateFinished !== undefined &&
@@ -500,6 +551,7 @@ export async function importAppleBooksFromRows(
     booksMatched: matched.length,
     booksUpdated,
     finishedDates,
+    startedDates,
     progressBooks,
     dryRun: Boolean(options.dryRun),
     matched,

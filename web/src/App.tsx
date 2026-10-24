@@ -10,7 +10,7 @@ import DetailPanel from './components/DetailPanel';
 import ImportDialog from './components/ImportDialog';
 import SettingsDialog from './components/SettingsDialog';
 import SeriesDialog from './components/SeriesDialog';
-import StatsDialog from './components/StatsDialog';
+import StatsView from './components/StatsView';
 import LoginPage from './components/LoginPage';
 import SetupPage from './components/SetupPage';
 import Toasts from './components/Toasts';
@@ -244,7 +244,7 @@ export default function App() {
           }}
         />
       )}
-      {statsOpen && <StatsDialog onClose={() => setStatsOpen(false)} />}
+      {statsOpen && <StatsView onClose={() => setStatsOpen(false)} />}
       {reader && (
         <Suspense
           fallback={

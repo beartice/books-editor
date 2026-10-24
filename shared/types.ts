@@ -171,6 +171,10 @@ export interface BookMeta {
   readingPositions?: Record<string, ReadingPosition>;
   /** Data in cui il libro e' stato finito (AAAA-MM-GG), null se non finito. */
   dateFinished: string | null;
+  /** Data in cui la lettura e' iniziata (AAAA-MM-GG): da Apple Books, dal lettore o a mano. */
+  dateStarted?: string | null;
+  /** Date di Apple Books per questo libro (ISO 8601, vuote se assenti). Gestito solo dal server. */
+  appleDates?: AppleDates;
 
   dateAdded: string;
   dateModified: string;
@@ -181,6 +185,16 @@ export interface BookMeta {
    * a mano, 'online' = preso da un provider esterno, 'ai' = inferito.
    */
   fieldSource: Record<string, string>;
+}
+
+/** Date che Apple Books conosce di un libro: servono a stimare l'inizio della lettura. */
+export interface AppleDates {
+  /** Aggiunta alla libreria di Apple Books. */
+  addedAt: string;
+  /** La piu' vecchia fra tutte le annotazioni, posizione di lettura compresa: prima apertura. */
+  firstOpenedAt: string;
+  /** Ultimo utilizzo del libro. */
+  lastEngagedAt: string;
 }
 
 /** Formati che il server sa convertire in EPUB/PDF all'import, secondo gli strumenti installati. */
@@ -218,6 +232,7 @@ export interface BookSummary {
   readingStatus: ReadingStatus;
   readingProgress: number | null;
   dateFinished: string | null;
+  dateStarted?: string | null;
   favorite: boolean;
   publisher: string;
   language: string;
@@ -302,6 +317,12 @@ export interface AppleLibraryRow {
   readingProgress?: number | string | null;
   /** Ultima apertura del libro in Apple Books (timestamp Core Data). */
   lastOpenedAt?: number | string | null;
+  /** Aggiunta del libro ad Apple Books (timestamp Core Data). */
+  addedAt?: number | string | null;
+  /** Ultimo utilizzo del libro (timestamp Core Data). */
+  lastEngagedAt?: number | string | null;
+  /** Annotazione piu' vecchia di qualunque tipo, posizione di lettura compresa (timestamp Core Data). */
+  firstOpenedAt?: number | string | null;
 }
 
 /** Dati letti da Apple Books sul Mac, prima dell'abbinamento con la libreria. */
@@ -342,6 +363,8 @@ export interface AppleBooksImportResult {
   booksUpdated: number;
   /** Libri abbinati con una data di fine lettura affidabile. */
   finishedDates: number;
+  /** Libri abbinati con una data di inizio stimata da Apple Books. */
+  startedDates?: number;
   /** Libri abbinati con una percentuale di lettura. */
   progressBooks: number;
   /** true se non e' stato scritto nulla (solo anteprima). */
@@ -519,6 +542,7 @@ export const FIELD_SPECS: FieldSpec[] = [
   { key: 'favorite', label: 'Preferito', group: 'extra', type: 'bool' },
   { key: 'readingStatus', label: 'Lettura', group: 'extra', type: 'text' },
   { key: 'readingProgress', label: 'Avanzamento (%)', group: 'extra', type: 'number' },
+  { key: 'dateStarted', label: 'Iniziato il', group: 'extra', type: 'date' },
   { key: 'dateFinished', label: 'Finito il', group: 'extra', type: 'date' },
   { key: 'folder', label: 'Cartella', group: 'extra', type: 'text' },
 ];
@@ -552,4 +576,104 @@ export interface LibrarySummary {
   isMain: boolean;
   /** true se le fanfiction sono nascoste nell'interfaccia di questa libreria. */
   hideFanfics: boolean;
+}
+
+/* ------------------------------------------------ statistiche di lettura -- */
+
+/** Un conteggio diviso fra libri e fanfiction. */
+export interface KindSplit {
+  total: number;
+  books: number;
+  fanfics: number;
+}
+
+/** Una lettura finita nel periodo (per la linea del tempo). */
+export interface ReadingStatsRead {
+  id: string;
+  title: string;
+  kind: BookKind;
+  /** Inizio della lettura (AAAA-MM-GG), null se non noto. */
+  start: string | null;
+  /** Fine della lettura (AAAA-MM-GG). */
+  end: string;
+  /** Giorni fra inizio e fine (0 = stesso giorno), null se l'inizio e' ignoto. */
+  days: number | null;
+  rating: number | null;
+}
+
+export interface ReadingStatsBucket {
+  key: 'same' | 'short' | 'week' | 'month' | 'long';
+  label: string;
+  count: number;
+}
+
+export interface ReadingStatsMonth {
+  /** AAAA-MM */
+  month: string;
+  count: number;
+  /** Giorni distinti con almeno una sottolineatura. */
+  days: number;
+}
+
+/** Risposta di `GET /api/stats/reading`. */
+export interface ReadingStats {
+  /** Periodo richiesto. */
+  year: number | 'all';
+  /** Finestra dei grafici: l'anno scelto, oppure gli ultimi 12 mesi con `all` (AAAA-MM-GG). */
+  window: { from: string; to: string; today: string };
+  /** Ci sono fanfiction visibili? Se no, niente legenda e niente barre delle fanfiction. */
+  hasFanfics: boolean;
+  tiles: {
+    /** Tutte le opere visibili, qualunque stato. */
+    total: KindSplit;
+    /** Stato attuale della libreria (non dipende dal periodo). */
+    read: KindSplit;
+    reading: KindSplit;
+    dnf: KindSplit;
+    unread: KindSplit;
+    /** Opere lette nel periodo (con `all`: tutte le lette, anche senza data di fine). */
+    period: {
+      read: KindSplit;
+      reread: number;
+      words: number;
+      /** Ore stimate (parole / (parole al minuto * 60)). */
+      hours: number;
+      averageRating: number | null;
+      rated: number;
+      fiveStars: number;
+    };
+  };
+  /** Opere lette per anno di fine, dal piu' vecchio al piu' recente, senza buchi. */
+  byYear: { year: number; books: number; fanfics: number }[];
+  /** Quante opere lette hanno la data di fine, e quante sono lette in tutto. */
+  withFinishDate: number;
+  readTotal: number;
+  reads: {
+    /** Per data di fine crescente. */
+    items: ReadingStatsRead[];
+    count: KindSplit;
+    /** Mediana dei giorni delle letture con inizio noto, null se nessuna. */
+    medianDays: number | null;
+    withStart: number;
+    buckets: ReadingStatsBucket[];
+    longest: ReadingStatsRead | null;
+  };
+  /** Sottolineature (Apple Books e lettore) per giorno, nella finestra. */
+  highlightsByDay: Record<string, number>;
+  highlightsByMonth: ReadingStatsMonth[];
+  highlightsTotal: number;
+  highlightsDays: number;
+  recordDay: { date: string; count: number } | null;
+  busiestMonth: ReadingStatsMonth | null;
+  topHighlighted: { id: string; title: string; count: number }[];
+  topAuthors: { name: string; count: number }[];
+  /** Voti delle opere del periodo, da 0,5 a 5. */
+  ratingDistribution: { value: number; count: number }[];
+  genres: { genre: string; count: number }[];
+  reading: {
+    total: number;
+    items: { id: string; title: string; kind: BookKind; progress: number }[];
+  };
+  /** Opere aggiunte nella finestra (data di Apple Books se c'e', altrimenti `dateAdded`). */
+  added: { total: number; byMonth: { month: string; count: number }[]; busiest: { month: string; count: number } | null };
 }

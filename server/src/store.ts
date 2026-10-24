@@ -169,6 +169,7 @@ export function toSummary(book: BookMeta): BookSummary {
     readingStatus: book.readingStatus,
     readingProgress: book.readingProgress,
     dateFinished: book.dateFinished,
+    dateStarted: book.dateStarted ?? null,
     favorite: book.favorite,
     publisher: book.publisher,
     language: book.language,

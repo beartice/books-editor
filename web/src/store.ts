@@ -722,6 +722,7 @@ export const useStore = create<State>((set, get) => ({
                 readingStatus: updated.readingStatus,
                 readingProgress: updated.readingProgress,
                 dateFinished: updated.dateFinished,
+                dateStarted: updated.dateStarted,
               }
             : book,
         ),
@@ -764,6 +765,7 @@ export const useStore = create<State>((set, get) => ({
                 readingStatus: updated.readingStatus,
                 readingProgress: updated.readingProgress,
                 dateFinished: updated.dateFinished,
+                dateStarted: updated.dateStarted,
                 favorite: updated.favorite,
                 publisher: updated.publisher,
                 language: updated.language,

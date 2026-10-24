@@ -126,27 +126,65 @@ export async function readAnnotations(database: string): Promise<AppleAnnotation
   return rows;
 }
 
+/**
+ * Per ogni asset, la data (timestamp Core Data) dell'annotazione piu' vecchia di
+ * QUALSIASI tipo: la posizione di lettura (tipo 3) nasce alla prima apertura del libro,
+ * prima di qualunque sottolineatura. Serve a stimare quando e' iniziata la lettura.
+ */
+export async function readFirstOpened(database: string): Promise<Map<string, number>> {
+  const rows = await sqliteJson<{ assetId: string | null; firstOpenedAt: number | string | null }>(
+    database,
+    `SELECT
+       ZANNOTATIONASSETID AS assetId,
+       MIN(ZANNOTATIONCREATIONDATE) AS firstOpenedAt
+     FROM ZAEANNOTATION
+     WHERE ZANNOTATIONASSETID IS NOT NULL
+       AND ZANNOTATIONCREATIONDATE IS NOT NULL
+     GROUP BY ZANNOTATIONASSETID`,
+  );
+  const result = new Map<string, number>();
+  for (const row of rows) {
+    const assetId = String(row.assetId ?? '').trim();
+    const value = Number(row.firstOpenedAt);
+    if (assetId && Number.isFinite(value)) result.set(assetId, value);
+  }
+  return result;
+}
+
 export async function readLibrary(database: string | null): Promise<AppleLibraryRow[]> {
   if (!database) return [];
-  const query = (withLastOpened: boolean) => `SELECT
+  const query = (withLastOpened: boolean, withDates: boolean) => `SELECT
        ZASSETID AS assetId,
        ZTITLE AS title,
        ZSORTTITLE AS sortTitle,
        ZAUTHOR AS author,
        ZSORTAUTHOR AS sortAuthor,
        ZDATEFINISHED AS finishedAt,
-       ZREADINGPROGRESS AS readingProgress${withLastOpened ? ',\n       ZLASTOPENDATE AS lastOpenedAt' : ''}
+       ZREADINGPROGRESS AS readingProgress${withLastOpened ? ',\n       ZLASTOPENDATE AS lastOpenedAt' : ''}${
+         withDates ? ',\n       ZCREATIONDATE AS addedAt,\n       ZLASTENGAGEDDATE AS lastEngagedAt' : ''
+       }
      FROM ZBKLIBRARYASSET
      WHERE ZASSETID IS NOT NULL`;
-  let rows: AppleLibraryRow[];
-  try {
-    rows = await sqliteJson<AppleLibraryRow>(database, query(true));
-  } catch (error) {
-    // Una versione di Libri senza la colonna dell'ultima apertura: si legge senza.
-    if (!/ZLASTOPENDATE|no such column/i.test((error as Error).message)) throw error;
-    rows = await sqliteJson<AppleLibraryRow>(database, query(false));
+  // Una versione di Libri senza qualche colonna: si riprova senza le colonne mancanti.
+  const attempts: [boolean, boolean][] = [
+    [true, true],
+    [true, false],
+    [false, true],
+    [false, false],
+  ];
+  let rows: AppleLibraryRow[] | null = null;
+  for (const [index, [withLastOpened, withDates]] of attempts.entries()) {
+    try {
+      rows = await sqliteJson<AppleLibraryRow>(database, query(withLastOpened, withDates));
+      break;
+    } catch (error) {
+      const missing = /ZLASTOPENDATE|ZCREATIONDATE|ZLASTENGAGEDDATE|no such column/i.test(
+        (error as Error).message,
+      );
+      if (!missing || index === attempts.length - 1) throw error;
+    }
   }
-  return rows.filter((row) => String(row.assetId ?? '').trim());
+  return (rows ?? []).filter((row) => String(row.assetId ?? '').trim());
 }
 
 /** Legge annotazioni e libreria di Apple Books dal Mac (o da una copia in APPLE_BOOKS_CONTAINER). */
@@ -155,9 +193,28 @@ export async function readAppleBooksData(): Promise<AppleBooksRawData> {
     throw new Error('L’importazione da Apple Books è disponibile solo su macOS.');
   }
   const { annotations: annotationDb, library: libraryDb } = await locateDatabases();
-  const [annotations, library] = await Promise.all([
-    readAnnotations(annotationDb),
+  // Due letture insieme dello stesso database (WAL) a volte si bloccano a vicenda: in fila.
+  const readAnnotationData = async () => {
+    const rows = await readAnnotations(annotationDb);
+    // Senza la prima apertura si stima l'inizio solo dalle sottolineature: non deve far fallire l'import.
+    const opened = await readFirstOpened(annotationDb).catch(() => new Map<string, number>());
+    return { rows, opened };
+  };
+  const [{ rows: annotations, opened: firstOpened }, library] = await Promise.all([
+    readAnnotationData(),
     readLibrary(libraryDb),
   ]);
+  // La prima apertura si unisce alla riga della libreria dello stesso asset.
+  const seen = new Set<string>();
+  for (const row of library) {
+    const assetId = String(row.assetId ?? '').trim();
+    seen.add(assetId);
+    const opened = firstOpened.get(assetId);
+    if (opened !== undefined) row.firstOpenedAt = opened;
+  }
+  // Asset con annotazioni ma senza riga nella libreria: una riga con la sola prima apertura.
+  for (const [assetId, opened] of firstOpened) {
+    if (!seen.has(assetId)) library.push({ assetId, firstOpenedAt: opened });
+  }
   return { database: annotationDb, annotations, library };
 }
