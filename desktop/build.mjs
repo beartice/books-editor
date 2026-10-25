@@ -122,7 +122,9 @@ if (!existsSync(path.join(cacheDir, 'package', 'package.json'))) {
     .trim()
     .split('\n')
     .pop();
-  execFileSync('tar', ['-xzf', path.join(cacheDir, packed), '-C', cacheDir]);
+  // Percorsi relativi alla cartella: il tar di Git per Windows legge «D:\...»
+  // come «host D, file remoto» e fallisce («Cannot connect to D: resolve failed»).
+  execFileSync('tar', ['-xzf', packed.trim()], { cwd: cacheDir });
 }
 cpSync(path.join(cacheDir, 'package'), path.join(modules, '@napi-rs', `canvas-${binary}`), { recursive: true });
 
