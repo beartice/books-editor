@@ -149,9 +149,14 @@ export function buildFanficUpdate(
   previous: FanficUpdate | null | undefined,
   now: string,
 ): FanficUpdate {
+  // Scheda senza stato: e' il primo controllo affidabile, non un aggiornamento.
+  // Lo stato e i capitoli del sito diventano il riferimento (vedi `baselinePatch`).
+  const baseline = !(book.status ?? '').trim();
   // Senza il numero di capitoli nella scheda non si puo' dire quanti siano nuovi.
   const newChapters =
-    remote.chapters != null && book.chapters != null ? Math.max(0, remote.chapters - book.chapters) : 0;
+    !baseline && remote.chapters != null && book.chapters != null
+      ? Math.max(0, remote.chapters - book.chapters)
+      : 0;
   return {
     checkedAt: now,
     remoteChapters: remote.chapters,
@@ -159,10 +164,31 @@ export function buildFanficUpdate(
     remoteComplete: remote.complete,
     remoteUpdated: remote.updated,
     newChapters,
-    completed: remote.complete && !isCompleteStatus(book.status),
+    completed: !baseline && remote.complete && !isCompleteStatus(book.status),
     error: null,
     ...(previous?.dismissedChapters != null ? { dismissedChapters: previous.dismissedChapters } : {}),
   };
+}
+
+/**
+ * Dati da scrivere sulla scheda al primo controllo di una storia senza stato: lo
+ * stato e il numero di capitoli del sito (quello letto dall'EPUB conta spesso le
+ * sezioni, non i capitoli). Non tocca i campi impostati a mano.
+ */
+export function baselinePatch(
+  book: Pick<BookMeta, 'status' | 'chapters' | 'fieldSource'>,
+  remote: RemoteStory,
+  site: Source['site'],
+): Partial<BookMeta> {
+  if ((book.status ?? '').trim()) return {};
+  const patch: Partial<BookMeta> = {};
+  if (book.fieldSource?.status !== 'manual') {
+    patch.status = site === 'efp'
+      ? (remote.complete ? 'Completa' : 'In corso')
+      : (remote.complete ? 'Complete' : 'Incomplete');
+  }
+  if (remote.chapters != null && book.fieldSource?.chapters !== 'manual') patch.chapters = remote.chapters;
+  return patch;
 }
 
 /** Controllo fallito: restano i dati dell'ultimo controllo riuscito, con il motivo. */
@@ -350,9 +376,12 @@ async function checkOne(id: string): Promise<{ update: FanficUpdate | null; rate
   if (!source) return { update: null, rateLimited: false };
   const now = new Date().toISOString();
   let update: FanficUpdate;
+  let extra: Partial<BookMeta> = {};
   let rateLimited = false;
   try {
-    update = buildFanficUpdate(book, await readRemote(source), book.fanficUpdate, now);
+    const remote = await readRemote(source);
+    update = buildFanficUpdate(book, remote, book.fanficUpdate, now);
+    extra = baselinePatch(book, remote, source.site);
   } catch (error) {
     rateLimited = isRateLimit(error);
     const message = rateLimited
@@ -360,7 +389,7 @@ async function checkOne(id: string): Promise<{ update: FanficUpdate | null; rate
       : (error as Error).message;
     update = buildFanficError(book.fanficUpdate, message, now);
   }
-  await saveUpdate(book, update);
+  await saveUpdate(book, update, extra);
   return { update, rateLimited };
 }
 
