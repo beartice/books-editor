@@ -148,6 +148,16 @@ export interface EfpImportResult {
   words: number;
 }
 
+export interface Ao3WaybackImportResult {
+  book: BookMeta;
+  chapters: number;
+  words: number;
+  /** Data della copia del Web Archive usata (AAAAMMGGhhmmss). */
+  snapshot: string;
+  /** 'epub' = EPUB ufficiale archiviato, 'html' = ricostruita dalle pagine. */
+  source: 'epub' | 'html';
+}
+
 export interface JellyfinInfo {
   serverName: string;
   version: string;
@@ -359,6 +369,11 @@ export const api = {
     requestBlob('/efp/download', {
       method: 'POST',
       body: JSON.stringify({ url, format }),
+    }),
+  importAo3Wayback: (url: string, force?: boolean) =>
+    request<Ao3WaybackImportResult>('/ao3/wayback/import', {
+      method: 'POST',
+      body: JSON.stringify({ url, ...(force ? { force: true } : {}) }),
     }),
   conversion: () => request<ConversionSupport>('/conversion'),
   uploadFile: async (file: File, options: { force?: boolean; attachTo?: string } = {}) => {

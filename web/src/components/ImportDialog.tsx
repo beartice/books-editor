@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { api, ApiError, tooLargeMessage } from '../api';
-import type { EfpImportResult } from '../api';
+import type { Ao3WaybackImportResult, EfpImportResult } from '../api';
 import type { BookMeta, BookSummary, ConversionSupport } from '@shared/types';
 import { syncAppleBooksFromApp } from '../desktop';
 import { hideFanficsOf, libraryNameOf, useStore } from '../store';
@@ -122,6 +122,8 @@ export default function ImportDialog({ onClose }: Props) {
   const queueRunning = progress !== null;
   const [efpUrl, setEfpUrl] = useState('');
   const [efpBusy, setEfpBusy] = useState<'import' | 'download' | null>(null);
+  const [waybackUrl, setWaybackUrl] = useState('');
+  const [waybackBusy, setWaybackBusy] = useState(false);
   const { load, select, toast, confirm, settings, libraries } = useStore();
   const libraryName = useStore(libraryNameOf);
   const hideFanfics = useStore(hideFanficsOf);
@@ -491,6 +493,67 @@ export default function ImportDialog({ onClose }: Props) {
     }
   };
 
+  /** «20160509020229» -> «9 maggio 2016». */
+  const snapshotLabel = (snapshot: string) => {
+    const match = snapshot.match(/^(\d{4})(\d{2})(\d{2})/);
+    if (!match) return snapshot;
+    return new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3]))).toLocaleDateString(
+      'it-IT',
+      { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'UTC' },
+    );
+  };
+
+  const importWayback = async () => {
+    const value = waybackUrl.trim();
+    if (!value || waybackBusy) return;
+    setWaybackBusy(true);
+    try {
+      let force = false;
+      let result: Ao3WaybackImportResult | null = null;
+      while (!result) {
+        try {
+          result = await api.importAo3Wayback(value, force);
+        } catch (error) {
+          const body =
+            error instanceof ApiError && error.status === 409
+              ? (error.body as { duplicate?: { reason: string; book: BookSummary } } | null)
+              : null;
+          if (!body?.duplicate) throw error;
+          // Opera gia' presente: si chiede se importarla comunque.
+          const { book, reason } = body.duplicate;
+          const reasons: Record<string, string> = {
+            ...DUPLICATE_REASONS,
+            source: 'stessa opera AO3',
+          };
+          const authors = book.authors?.length ? ` di ${book.authors.join(', ')}` : '';
+          const answer = await confirm(
+            `«${book.title}»${authors} è già nella libreria (${reasons[reason] ?? reason}${hiddenNote(book)}).`,
+            [
+              { label: 'Importa comunque', value: 'force', primary: true },
+              { label: 'Annulla', value: 'cancel' },
+            ],
+          );
+          if (answer !== 'force') return;
+          force = true;
+        }
+      }
+      await load();
+      void syncAppleBooksFromApp([result.book.id]);
+      toast(
+        `Storia importata dal Web Archive: "${result.book.title}" · ${result.chapters} capitoli (copia del ${snapshotLabel(result.snapshot)})`,
+        'success',
+      );
+      const notice = hiddenFanficNotice([result.book.kind]);
+      if (notice) toast(notice, 'info');
+      await select(result.book.id);
+      onClose();
+    } catch (error) {
+      toast((error as Error).message, 'error');
+    } finally {
+      setWaybackBusy(false);
+    }
+  };
+
   const downloadEfp = async () => {
     const value = efpUrl.trim();
     if (!value) return;
@@ -692,6 +755,37 @@ export default function ImportDialog({ onClose }: Props) {
           <p className="mt-1 text-[11px] text-ink-500">
             L’import crea EPUB e ODT nella cartella del libro; “Scarica ODT” salva il documento
             sul computer.
+          </p>
+        </div>
+
+        <div className="mt-4 rounded-xl border border-accent-500/20 bg-accent-500/[0.04] p-3">
+          <div className="mb-2 flex items-center justify-between gap-2">
+            <span className="text-[11px] font-semibold uppercase tracking-wider text-ink-300">
+              Da AO3 tramite Web Archive
+            </span>
+            <span className="rounded-full bg-accent-500/10 px-2 py-0.5 text-[10px] font-medium text-accent-500">
+              opere rimosse
+            </span>
+          </div>
+          <input
+            value={waybackUrl}
+            onChange={(event) => setWaybackUrl(event.target.value)}
+            onKeyDown={(event) => event.key === 'Enter' && importWayback()}
+            placeholder="https://web.archive.org/web/…/archiveofourown.org/works/…"
+            className="field-input text-[12px]"
+          />
+          <div className="mt-2 flex flex-wrap gap-2">
+            <button
+              onClick={importWayback}
+              disabled={waybackBusy || !waybackUrl.trim()}
+              className="btn-primary px-3 py-1.5 text-[12px]"
+            >
+              {waybackBusy ? 'Cerco nell\'archivio…' : 'Importa nella libreria'}
+            </button>
+          </div>
+          <p className="mt-1 text-[11px] text-ink-500">
+            Usa l’EPUB salvato nell’archivio o ricostruisce la storia dalle pagine archiviate, solo
+            se ci sono tutti i capitoli. Può richiedere qualche minuto.
           </p>
         </div>
 

@@ -68,6 +68,7 @@ import { AppleBooksError, appleBooksStatus, writeToAppleBooks, type AppleBooksFi
 import { Ao3LoginError, loginAo3 } from './ao3login.js';
 import { ao3SessionInfo, clearAo3Session } from './providers/ao3session.js';
 import { buildEpub, buildOdt, importEfpStory, loadEfpStory } from './efp.js';
+import { importAo3FromWayback } from './ao3Wayback.js';
 import {
   dismissFanficUpdate,
   getFanficCheckState,
@@ -1240,6 +1241,34 @@ export async function registerApi(app: FastifyInstance): Promise<void> {
           created: result.created,
           chapters: result.story.chapters.length,
           words: result.story.wordCount,
+        };
+      } catch (error) {
+        return reply.code(400).send({ error: (error as Error).message });
+      }
+    },
+  );
+
+  /* ------------------------------------------------- AO3 dal Web Archive -- */
+  /** Importa un'opera AO3 (anche rimossa) dalle copie del Web Archive: EPUB archiviato o ricostruzione. */
+  app.post<{ Body: { url?: string; force?: boolean } }>(
+    '/api/ao3/wayback/import',
+    async (request, reply) => {
+      const url = request.body?.url?.trim();
+      if (!url) {
+        return reply
+          .code(400)
+          .send({ error: 'Incolla un link del Web Archive o di AO3, oppure il numero dell\'opera.' });
+      }
+      try {
+        const result = await importAo3FromWayback(url, { force: request.body?.force === true });
+        if ('duplicate' in result) return reply.code(409).send(duplicateReply(result.duplicate));
+        const book = (await getBookMeta(result.book.id)) ?? result.book;
+        return {
+          book,
+          chapters: result.chapters,
+          words: result.words,
+          snapshot: result.snapshot,
+          source: result.source,
         };
       } catch (error) {
         return reply.code(400).send({ error: (error as Error).message });

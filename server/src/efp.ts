@@ -608,7 +608,9 @@ function wrapCoverLines(
  * Restituisce `null` se il rendering non e' disponibile, cosi' l'import non
  * fallisce mai per colpa della copertina.
  */
-export async function renderCover(story: EfpStory): Promise<Buffer | null> {
+export async function renderCover(
+  story: Pick<EfpStory, 'title' | 'author' | 'fandom' | 'genres'>,
+): Promise<Buffer | null> {
   try {
     const { createCanvas } = await import('@napi-rs/canvas');
     const canvas = createCanvas(COVER_W, COVER_H);
@@ -673,7 +675,7 @@ export async function renderCover(story: EfpStory): Promise<Buffer | null> {
 
 /* --------------------------------------------------------------- EPUB -- */
 
-const EPUB_CSS = `body { font-family: Georgia, serif; line-height: 1.6; margin: 0 1.2em; }
+export const EPUB_CSS = `body { font-family: Georgia, serif; line-height: 1.6; margin: 0 1.2em; }
 h1 { font-size: 1.4em; text-align: center; margin: 2em 0 1em; }
 p { margin: 0 0 0.8em; text-align: justify; }
 .title-page { text-align: center; margin-top: 30%; }
@@ -702,7 +704,15 @@ ${paragraphs}
 </html>`;
 }
 
-function coverXhtml(story: EfpStory): string {
+/** container.xml di un EPUB con il pacchetto in OEBPS/content.opf. */
+export const EPUB_CONTAINER_XML = `<?xml version="1.0" encoding="UTF-8"?>
+<container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
+  <rootfiles>
+    <rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/>
+  </rootfiles>
+</container>`;
+
+export function coverXhtml(story: Pick<EfpStory, 'title'>): string {
   return `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE html>
 <html xmlns="http://www.w3.org/1999/xhtml" xml:lang="it" lang="it">
@@ -815,14 +825,7 @@ ${navItems}
   </body>
 </html>`;
 
-  const container = `<?xml version="1.0" encoding="UTF-8"?>
-<container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
-  <rootfiles>
-    <rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/>
-  </rootfiles>
-</container>`;
-
-  zip.addFile('META-INF/container.xml', Buffer.from(container, 'utf8'));
+  zip.addFile('META-INF/container.xml', Buffer.from(EPUB_CONTAINER_XML, 'utf8'));
   zip.addFile('OEBPS/content.opf', Buffer.from(opf, 'utf8'));
   zip.addFile('OEBPS/nav.xhtml', Buffer.from(nav, 'utf8'));
   zip.addFile('OEBPS/style.css', Buffer.from(EPUB_CSS, 'utf8'));

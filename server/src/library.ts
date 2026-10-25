@@ -458,7 +458,7 @@ function stripVolatile(meta: BookMeta): Omit<BookMeta, 'dateModified'> {
 }
 
 /** Cartella di lavoro per una conversione: sta in `.uploads` (su disco, non nel tmpfs di /tmp). */
-async function makeWorkDir(): Promise<string> {
+export async function makeWorkDir(): Promise<string> {
   const settings = await loadSettings();
   const staging = path.join(settings.libraryRoot, '.uploads');
   await fsp.mkdir(staging, { recursive: true });

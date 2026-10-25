@@ -102,7 +102,7 @@ function parseNumber(value: string): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
-interface ChapterCount {
+export interface ChapterCount {
   current: number | null;
   total: number | null;
   openEnded: boolean;
@@ -177,7 +177,7 @@ const LANGUAGE_MAP: Record<string, string> = {
   cinese: 'zh',
 };
 
-function normalizeLanguage(value: string): string {
+export function normalizeLanguage(value: string): string {
   const clean = value.trim();
   const key = clean.toLowerCase().replace(/[^a-z]/g, '');
   if (LANGUAGE_MAP[key]) return LANGUAGE_MAP[key];
@@ -245,10 +245,38 @@ function extractAo3Summary(html: string): string {
   return htmlToText(quote);
 }
 
-function parseAo3Page(html: string, url: string): MetadataCandidate | null {
-  const workId = url.match(/\/works\/(\d+)/i)?.[1] ?? '';
-  const canonicalUrl = workId ? `https://archiveofourown.org/works/${workId}` : url;
+/** Metadati grezzi di una pagina AO3, come scritti sul sito (senza normalizzazioni). */
+export interface Ao3Details {
+  title: string;
+  authors: string[];
+  /** Riassunto in testo semplice, con i paragrafi separati da una riga vuota. */
+  summary: string;
+  coverUrl: string | null;
+  rating: string;
+  warnings: string[];
+  categories: string[];
+  fandoms: string[];
+  relationships: string[];
+  characters: string[];
+  extraTags: string[];
+  /** Lingua come scritta nella pagina («English») oppure il codice dell'attributo lang. */
+  language: string;
+  /** Voce «Series» in testo semplice («Part 2 of Nome»), vuota se l'opera non e' in una serie. */
+  seriesRaw: string;
+  /** HTML del <dd> della serie, per leggere nome e posizione dai tag. */
+  seriesHtml: string;
+  published: string;
+  completed: string;
+  updated: string;
+  words: number | null;
+  chapters: ChapterCount;
+}
 
+/**
+ * Legge i metadati di una pagina AO3 (opera). Restituisce null se manca il
+ * titolo (pagina d'errore, interstiziale, accesso richiesto).
+ */
+export function parseAo3Details(html: string): Ao3Details | null {
   const title = stripHtml(
     html.match(/<h2[^>]*class=["'][^"']*title[^"']*["'][^>]*>([\s\S]*?)<\/h2>/i)?.[1] ?? '',
   );
@@ -264,9 +292,6 @@ function parseAo3Page(html: string, url: string): MetadataCandidate | null {
     if (fallback) authors = [fallback];
   }
 
-  const description = extractAo3Summary(html);
-  const coverUrl = metaContent(html, 'og:image') || null;
-
   // Il blocco statistiche e' un <dl class="stats"> annidato dentro il <dl>
   // dei metadati. Isolandolo evitiamo che la regex "dt + dd" del blocco
   // esterno si mangi la prima statistica (Published).
@@ -277,26 +302,61 @@ function parseAo3Page(html: string, url: string): MetadataCandidate | null {
   const statsPairs = statsHtml ? extractAo3Pairs(statsHtml) : [];
   const stats = statsPairs.length ? statsPairs : metaPairs;
 
-  const ratingRaw = firstPairValue(metaPairs, ['rating'], ['rating']);
-  const warnings = pairValues(metaPairs, ['warning'], ['archive warning', 'archive warnings', 'warnings']);
-  const categories = pairValues(metaPairs, ['category'], ['category', 'categories']);
-  const fandoms = pairValues(metaPairs, ['fandom'], ['fandom', 'fandoms']);
-  const relationships = pairValues(metaPairs, ['relationship'], ['relationship', 'relationships']);
-  const characters = pairValues(metaPairs, ['character'], ['character', 'characters']);
-  const extraTags = pairValues(metaPairs, ['freeform'], ['additional tags', 'tags']);
   const languagePair = metaPairs.find(
     (pair) => pair.classes.includes('language') || pair.label === 'language',
   );
-  const languageRaw = languagePair?.lang || languagePair?.values[0] || '';
-  const seriesRaw = firstPairValue(metaPairs, ['series'], ['series']);
 
-  const published = firstPairValue(stats, ['published'], ['published', 'published on']);
-  // AO3 usa la stessa classe "status" sia per "Completed" sia per "Updated":
-  // distinguiamo dall'etichetta, altrimenti un WIP risulterebbe completo.
-  const completed = firstPairValue(stats, [], ['completed', 'completed on']);
-  const updated = firstPairValue(stats, [], ['updated', 'updated on', 'last updated']);
-  const words = parseNumber(firstPairValue(stats, ['words'], ['words', 'word count']));
-  const chapters = parseChapterCount(firstPairValue(stats, ['chapters'], ['chapters', 'chapter count']));
+  return {
+    title,
+    authors,
+    summary: extractAo3Summary(html),
+    coverUrl: metaContent(html, 'og:image') || null,
+    rating: firstPairValue(metaPairs, ['rating'], ['rating']),
+    warnings: pairValues(metaPairs, ['warning'], ['archive warning', 'archive warnings', 'warnings']),
+    categories: pairValues(metaPairs, ['category'], ['category', 'categories']),
+    fandoms: pairValues(metaPairs, ['fandom'], ['fandom', 'fandoms']),
+    relationships: pairValues(metaPairs, ['relationship'], ['relationship', 'relationships']),
+    characters: pairValues(metaPairs, ['character'], ['character', 'characters']),
+    extraTags: pairValues(metaPairs, ['freeform'], ['additional tags', 'tags']),
+    language: languagePair?.lang || languagePair?.values[0] || '',
+    seriesRaw: firstPairValue(metaPairs, ['series'], ['series']),
+    seriesHtml:
+      metaHtml.match(/<dd\b[^>]*class=["'][^"']*\bseries\b[^"']*["'][^>]*>([\s\S]*?)<\/dd>/i)?.[1] ?? '',
+    published: firstPairValue(stats, ['published'], ['published', 'published on']),
+    // AO3 usa la stessa classe "status" sia per "Completed" sia per "Updated":
+    // distinguiamo dall'etichetta, altrimenti un WIP risulterebbe completo.
+    completed: firstPairValue(stats, [], ['completed', 'completed on']),
+    updated: firstPairValue(stats, [], ['updated', 'updated on', 'last updated']),
+    words: parseNumber(firstPairValue(stats, ['words'], ['words', 'word count'])),
+    chapters: parseChapterCount(firstPairValue(stats, ['chapters'], ['chapters', 'chapter count'])),
+  };
+}
+
+function parseAo3Page(html: string, url: string): MetadataCandidate | null {
+  const workId = url.match(/\/works\/(\d+)/i)?.[1] ?? '';
+  const canonicalUrl = workId ? `https://archiveofourown.org/works/${workId}` : url;
+
+  const details = parseAo3Details(html);
+  if (!details) return null;
+  const {
+    title,
+    authors,
+    summary: description,
+    coverUrl,
+    warnings,
+    categories,
+    fandoms,
+    relationships,
+    characters,
+    extraTags,
+    published,
+    completed,
+    updated,
+    words,
+    chapters,
+  } = details;
+  const ratingRaw = details.rating;
+  const languageRaw = details.language;
 
   let status = '';
   if (completed) status = 'Complete';
@@ -307,7 +367,7 @@ function parseAo3Page(html: string, url: string): MetadataCandidate | null {
     status = 'Incomplete';
   }
 
-  const series = parseSeries(seriesRaw);
+  const series = parseSeries(details.seriesRaw);
   const tags = [...new Set([...categories, ...extraTags, ...warnings])].filter(Boolean);
 
   const fields: Partial<BookMeta> = { kind: 'fanfic' };
