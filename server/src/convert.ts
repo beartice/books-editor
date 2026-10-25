@@ -18,6 +18,14 @@ const MIN_DJVU_CHARS_PER_PAGE = 20;
 
 const CALIBRE_MAC_DIR = '/Applications/calibre.app/Contents/MacOS';
 
+/** Cartelle standard degli strumenti su Windows (non sono nel PATH dopo l'installazione). */
+function windowsToolDirs(name: string): string[] {
+  const roots = [process.env.ProgramFiles, process.env['ProgramFiles(x86)'], 'C:\\Program Files', 'C:\\Program Files (x86)']
+    .filter((dir): dir is string => Boolean(dir));
+  const folders = name === 'ebook-convert' ? ['Calibre2'] : ['DjVuLibre', 'DjVuLibre\\bin'];
+  return [...new Set(roots.flatMap((root) => folders.map((folder) => path.join(root, folder))))];
+}
+
 /** Errore di conversione con un messaggio adatto all'utente (i dettagli vanno nel log). */
 export class ConversionError extends Error {}
 
@@ -57,9 +65,14 @@ export function findTool(name: 'ebook-convert' | 'ddjvu' | 'djvutxt' | 'djvused'
   if (override) return isExecutable(override) ? override : null;
   const dirs = (process.env.PATH ?? '').split(path.delimiter).filter(Boolean);
   if (name === 'ebook-convert') dirs.push(CALIBRE_MAC_DIR);
+  if (process.platform === 'win32') dirs.push(...windowsToolDirs(name));
+  // Su Windows gli eseguibili hanno l'estensione .exe.
+  const fileNames = process.platform === 'win32' ? [`${name}.exe`, name] : [name];
   for (const dir of dirs) {
-    const candidate = path.join(dir, name);
-    if (isExecutable(candidate)) return candidate;
+    for (const fileName of fileNames) {
+      const candidate = path.join(dir, fileName);
+      if (isExecutable(candidate)) return candidate;
+    }
   }
   return null;
 }
@@ -113,6 +126,17 @@ function run(tool: string, args: string[], workDir: string, maxBuffer = 64 * 102
     CALIBRE_TEMP_DIR: tmp,
     QT_QPA_PLATFORM: process.env.QT_QPA_PLATFORM ?? 'offscreen',
   };
+  if (process.platform === 'win32') {
+    // Gli strumenti di Windows hanno bisogno della cartella di sistema e di profilo/temporanei propri.
+    Object.assign(env, {
+      SystemRoot: process.env.SystemRoot ?? 'C:\\Windows',
+      TEMP: tmp,
+      TMP: tmp,
+      USERPROFILE: home,
+      APPDATA: path.join(home, 'AppData', 'Roaming'),
+      LOCALAPPDATA: path.join(home, 'AppData', 'Local'),
+    });
+  }
   return new Promise((resolve, reject) => {
     execFile(
       tool,

@@ -3,7 +3,7 @@ import type { FormEvent } from 'react';
 import { hideFanficsOf, libraryNameOf, useStore } from '../store';
 import { ApiError, api } from '../api';
 import type { AppleBooksImportResult } from '@shared/types';
-import { desktop, importAppleBooksViaApp, setAppleAutoSync } from '../desktop';
+import { appleBridge, desktop, importAppleBooksViaApp, setAppleAutoSync, unwrap } from '../desktop';
 import { IconClose, IconFolder, IconLogout } from './icons';
 import FanficSettingsSection from './FanficSettingsSection';
 import Ao3AccountSection from './Ao3AccountSection';
@@ -38,6 +38,26 @@ export default function SettingsDialog({ onClose }: Props) {
   // null = non ancora noto; local = il server legge Apple Books da se' (stesso Mac).
   const [appleLocal, setAppleLocal] = useState<boolean | null>(null);
   const [busy, setBusy] = useState(false);
+  // App desktop in modalita' locale: la cartella della libreria si sceglie con la finestra di sistema.
+  const [canPickFolder, setCanPickFolder] = useState(false);
+
+  useEffect(() => {
+    desktop()
+      ?.info()
+      .then((info) => setCanPickFolder(info.ok && info.value.localServer))
+      .catch(() => setCanPickFolder(false));
+  }, []);
+
+  const pickFolder = async () => {
+    const bridge = desktop();
+    if (!bridge) return;
+    try {
+      const picked = unwrap(await bridge.pickFolder());
+      if (picked.path) setLibraryRoot(picked.path);
+    } catch (error) {
+      useStore.getState().toast((error as Error).message, 'error');
+    }
+  };
 
   useEffect(() => {
     api
@@ -177,6 +197,11 @@ export default function SettingsDialog({ onClose }: Props) {
                 readOnly={settings.libraryRootLocked}
                 disabled={settings.libraryRootLocked}
               />
+              {canPickFolder && libraryId === 'main' && !settings.libraryRootLocked && (
+                <button type="button" onClick={() => void pickFolder()} className="btn-ghost shrink-0 text-[12px]">
+                  Scegli…
+                </button>
+              )}
             </div>
             <span className="mt-1 flex items-center gap-1 text-[11px] text-ink-500">
               <IconFolder className="h-3.5 w-3.5" />
@@ -412,93 +437,96 @@ export default function SettingsDialog({ onClose }: Props) {
 
           <FanficSettingsSection />
 
-          <div className="rounded-lg border border-black/[0.06] bg-ink-800 p-3">
-            <div className="mb-1 flex items-center justify-between gap-2">
-              <span className="field-label !mb-0">Sottolineature da Apple Books</span>
-              <span className="chip border-black/[0.08] text-ink-400">
-                {appleLocal === false && !desktop() ? 'app per Mac' : 'solo macOS'}
-              </span>
-            </div>
-            <p className="text-[11px] leading-relaxed text-ink-500">
-              Legge le evidenziazioni e le note dal database locale di Libri e le salva
-              nei libri abbinati per titolo e autore. L’import è ripetibile: le
-              annotazioni già presenti vengono aggiornate, non duplicate.
-            </p>
-            <button
-              type="button"
-              onClick={importApple}
-              disabled={appleBusy || appleLocal === null || (!appleLocal && !desktop())}
-              className="btn-ghost mt-2 text-[12px] disabled:opacity-60"
-            >
-              {appleBusy ? 'Lettura in corso…' : desktop() ? 'Sincronizza ora' : 'Importa da Apple Books'}
-            </button>
-            {appleLocal === false && !desktop() && (
-              <p className="mt-2 text-[11px] leading-relaxed text-ink-500">
-                Disponibile nell’app per Mac (vedi il README del progetto).
+          {/* Su Windows (app desktop) Apple Books non esiste: la sezione non compare. */}
+          {!(desktop() && !appleBridge()) && (
+            <div className="rounded-lg border border-black/[0.06] bg-ink-800 p-3">
+              <div className="mb-1 flex items-center justify-between gap-2">
+                <span className="field-label !mb-0">Sottolineature da Apple Books</span>
+                <span className="chip border-black/[0.08] text-ink-400">
+                  {appleLocal === false && !appleBridge() ? 'app per Mac' : 'solo macOS'}
+                </span>
+              </div>
+              <p className="text-[11px] leading-relaxed text-ink-500">
+                Legge le evidenziazioni e le note dal database locale di Libri e le salva
+                nei libri abbinati per titolo e autore. L’import è ripetibile: le
+                annotazioni già presenti vengono aggiornate, non duplicate.
               </p>
-            )}
-            {desktop() && !appleLocal && (
-              <div className="mt-3 border-t border-black/[0.06] pt-2">
-                <label className="flex items-center gap-2 text-[12px] text-ink-300">
-                  <input
-                    type="checkbox"
-                    checked={appleSync.enabled}
-                    onChange={(event) => setAppleAutoSync(event.target.checked)}
-                  />
-                  Sincronizza automaticamente con Apple Books
-                </label>
-                <p className="mt-1 text-[11px] text-ink-500">
-                  {appleSync.enabled ? 'Sincronizzazione automatica attiva' : 'Sincronizzazione automatica spenta'} ·{' '}
-                  {appleSync.lastAt
-                    ? `ultima: ${new Date(appleSync.lastAt).toLocaleTimeString('it-IT', {
-                        hour: '2-digit',
-                        minute: '2-digit',
-                      })}`
-                    : 'non ancora eseguita'}
+              <button
+                type="button"
+                onClick={importApple}
+                disabled={appleBusy || appleLocal === null || (!appleLocal && !appleBridge())}
+                className="btn-ghost mt-2 text-[12px] disabled:opacity-60"
+              >
+                {appleBusy ? 'Lettura in corso…' : appleBridge() ? 'Sincronizza ora' : 'Importa da Apple Books'}
+              </button>
+              {appleLocal === false && !appleBridge() && (
+                <p className="mt-2 text-[11px] leading-relaxed text-ink-500">
+                  Disponibile nell’app per Mac (vedi il README del progetto).
                 </p>
-              </div>
-            )}
-            {appleError && (
-              <p className="mt-2 text-[11px] leading-relaxed text-rose-600">{appleError}</p>
-            )}
-            {appleResult && (
-              <div className="mt-2 rounded-md border border-black/[0.06] bg-ink-900/40 p-2.5 text-[11px] leading-relaxed text-ink-400">
-                <p>
-                  <strong className="text-ink-200">{appleResult.annotations}</strong>{' '}
-                  annotazioni lette ·{' '}
-                  <strong className="text-ink-200">{appleResult.booksMatched}</strong> libri
-                  abbinati ·{' '}
-                  <strong className="text-ink-200">{appleResult.imported}</strong>{' '}
-                  annotazioni importate ·{' '}
-                  <strong className="text-ink-200">{appleResult.finishedDates}</strong>{' '}
-                  date di fine lettura ·{' '}
-                  <strong className="text-ink-200">{appleResult.progressBooks}</strong>{' '}
-                  avanzamenti
-                  {appleResult.booksUpdated !== appleResult.booksMatched
-                    ? ` (${appleResult.booksUpdated} libri aggiornati)`
-                    : ''}
-                  .
-                </p>
-                {appleResult.unmatched.length > 0 && (
-                  <details className="mt-1.5">
-                    <summary className="cursor-pointer text-ink-300">
-                      {appleResult.unmatched.length} libri di Apple Books non sono in
-                      libreria
-                    </summary>
-                    <ul className="mt-1.5 max-h-40 space-y-0.5 overflow-y-auto pr-1">
-                      {appleResult.unmatched.slice(0, 80).map((item) => (
-                        <li key={item.assetId} className="truncate">
-                          {item.title}
-                          {item.author ? ` — ${item.author}` : ''}{' '}
-                          <span className="text-ink-600">({item.count})</span>
-                        </li>
-                      ))}
-                    </ul>
-                  </details>
-                )}
-              </div>
-            )}
-          </div>
+              )}
+              {appleBridge() && !appleLocal && (
+                <div className="mt-3 border-t border-black/[0.06] pt-2">
+                  <label className="flex items-center gap-2 text-[12px] text-ink-300">
+                    <input
+                      type="checkbox"
+                      checked={appleSync.enabled}
+                      onChange={(event) => setAppleAutoSync(event.target.checked)}
+                    />
+                    Sincronizza automaticamente con Apple Books
+                  </label>
+                  <p className="mt-1 text-[11px] text-ink-500">
+                    {appleSync.enabled ? 'Sincronizzazione automatica attiva' : 'Sincronizzazione automatica spenta'} ·{' '}
+                    {appleSync.lastAt
+                      ? `ultima: ${new Date(appleSync.lastAt).toLocaleTimeString('it-IT', {
+                          hour: '2-digit',
+                          minute: '2-digit',
+                        })}`
+                      : 'non ancora eseguita'}
+                  </p>
+                </div>
+              )}
+              {appleError && (
+                <p className="mt-2 text-[11px] leading-relaxed text-rose-600">{appleError}</p>
+              )}
+              {appleResult && (
+                <div className="mt-2 rounded-md border border-black/[0.06] bg-ink-900/40 p-2.5 text-[11px] leading-relaxed text-ink-400">
+                  <p>
+                    <strong className="text-ink-200">{appleResult.annotations}</strong>{' '}
+                    annotazioni lette ·{' '}
+                    <strong className="text-ink-200">{appleResult.booksMatched}</strong> libri
+                    abbinati ·{' '}
+                    <strong className="text-ink-200">{appleResult.imported}</strong>{' '}
+                    annotazioni importate ·{' '}
+                    <strong className="text-ink-200">{appleResult.finishedDates}</strong>{' '}
+                    date di fine lettura ·{' '}
+                    <strong className="text-ink-200">{appleResult.progressBooks}</strong>{' '}
+                    avanzamenti
+                    {appleResult.booksUpdated !== appleResult.booksMatched
+                      ? ` (${appleResult.booksUpdated} libri aggiornati)`
+                      : ''}
+                    .
+                  </p>
+                  {appleResult.unmatched.length > 0 && (
+                    <details className="mt-1.5">
+                      <summary className="cursor-pointer text-ink-300">
+                        {appleResult.unmatched.length} libri di Apple Books non sono in
+                        libreria
+                      </summary>
+                      <ul className="mt-1.5 max-h-40 space-y-0.5 overflow-y-auto pr-1">
+                        {appleResult.unmatched.slice(0, 80).map((item) => (
+                          <li key={item.assetId} className="truncate">
+                            {item.title}
+                            {item.author ? ` — ${item.author}` : ''}{' '}
+                            <span className="text-ink-600">({item.count})</span>
+                          </li>
+                        ))}
+                      </ul>
+                    </details>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
 
           <label className="flex cursor-pointer items-start gap-3 rounded-lg border border-black/[0.06] bg-ink-800 p-3">
             <input

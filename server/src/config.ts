@@ -56,6 +56,13 @@ export const IS_PRODUCTION = process.env.NODE_ENV === 'production';
 /** Se LIBRARY_ROOT e' definita nell'ambiente, la cartella della libreria non e' modificabile. */
 export const LIBRARY_ROOT_LOCKED = Boolean(process.env.LIBRARY_ROOT?.trim());
 
+/**
+ * App desktop in modalita' locale: l'app genera a ogni avvio un token casuale e lo mette in un
+ * cookie della propria finestra. Con il token impostato niente login ne' configurazione dell'account:
+ * vale come autenticata solo la richiesta che porta il cookie giusto.
+ */
+export const DESKTOP_TOKEN = process.env.DESKTOP_TOKEN?.trim() ?? '';
+
 /** Autenticazione con pagina di login e sessione (deployment su server pubblico). */
 export const AUTH_USER = process.env.AUTH_USER ?? '';
 export const AUTH_PASS = process.env.AUTH_PASS ?? '';
@@ -122,7 +129,8 @@ export const JELLYFIN_SYNC_MINUTES = (() => {
   return raw && Number.isFinite(value) && value >= 0 ? value : 30;
 })();
 
-export const WEB_DIST = path.join(PROJECT_ROOT, 'web', 'dist');
+/** Front-end compilato; `WEB_DIST` serve all'app desktop, dove il server e' impacchettato altrove. */
+export const WEB_DIST = envPath('WEB_DIST', path.join(PROJECT_ROOT, 'web', 'dist'));
 
 export function ensureDir(dir: string): string {
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });

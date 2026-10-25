@@ -9,19 +9,47 @@ export type BridgeResult<T> =
 
 const configFile = (): string => path.join(app.getPath('userData'), 'config.json');
 
-/** Indirizzo del server salvato (solo l'origine), o null al primo avvio. */
-export function readServerUrl(): string | null {
-  try {
-    const data = JSON.parse(fs.readFileSync(configFile(), 'utf8')) as { serverUrl?: unknown };
-    return typeof data.serverUrl === 'string' ? normalizeServerUrl(data.serverUrl) : null;
-  } catch {
-    return null;
-  }
+/** Modalita' dell'app: server di books-editor dentro l'app, oppure client di un server remoto. */
+export type Mode = 'local' | 'server';
+
+/** Contenuto di `config.json` nella cartella dei dati dell'app. */
+export interface AppConfig {
+  mode: Mode | null;
+  serverUrl: string | null;
+  /** Cartella della libreria scelta al primo avvio (poi vale `settings.json` del server). */
+  libraryRoot: string | null;
+  /** Ultima porta usata dal server locale: tenerla stabile conserva i dati del sito (localStorage). */
+  localPort: number | null;
 }
 
-export function writeServerUrl(serverUrl: string): void {
+/**
+ * Legge la configurazione. Un `config.json` delle versioni precedenti ha solo `serverUrl`
+ * e resta in modalita' server, senza domande; senza nulla (primo avvio) la modalita' e' null.
+ */
+export function readConfig(): AppConfig {
+  let data: Record<string, unknown> = {};
+  try {
+    data = JSON.parse(fs.readFileSync(configFile(), 'utf8')) as Record<string, unknown>;
+  } catch {
+    /* assente o illeggibile: primo avvio */
+  }
+  const serverUrl = typeof data.serverUrl === 'string' ? normalizeServerUrl(data.serverUrl) : null;
+  const libraryRoot = typeof data.libraryRoot === 'string' && path.isAbsolute(data.libraryRoot) ? data.libraryRoot : null;
+  const port = Number(data.localPort);
+  const mode: Mode | null = data.mode === 'local' && libraryRoot ? 'local' : serverUrl ? 'server' : null;
+  return {
+    mode,
+    serverUrl,
+    libraryRoot,
+    localPort: Number.isInteger(port) && port >= 1024 && port <= 65535 ? port : null,
+  };
+}
+
+/** Aggiorna alcuni campi di `config.json`, lasciando gli altri come sono. */
+export function updateConfig(patch: Partial<AppConfig>): void {
+  const next = { ...readConfig(), ...patch };
   fs.mkdirSync(app.getPath('userData'), { recursive: true });
-  fs.writeFileSync(configFile(), JSON.stringify({ serverUrl }, null, 2));
+  fs.writeFileSync(configFile(), JSON.stringify(next, null, 2));
 }
 
 /** Accetta solo http(s) e restituisce l'origine (senza percorso); null se non valido. */

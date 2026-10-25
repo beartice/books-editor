@@ -168,6 +168,8 @@ export interface AuthStatus {
   setupLibraryRoot?: string | null;
   setupLibraryRootLocked?: boolean;
   credentialsSource: 'env' | 'file' | null;
+  /** App desktop in modalita' locale: nessun account, accesso con il cookie dell'app. */
+  desktop?: boolean;
 }
 
 export const api = {

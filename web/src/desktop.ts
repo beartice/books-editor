@@ -13,9 +13,14 @@ export type DesktopResult<T> =
   | { ok: true; value: T }
   | { ok: false; code: 'running' | 'failed'; message: string };
 
-/** Ponte esposto dall'app per Mac (preload). Nel browser non esiste. */
+/** Ponte esposto dall'app desktop (preload). Nel browser non esiste. */
 export interface BooksDesktop {
-  info(): Promise<{ version: string; appleBooks: boolean }>;
+  /** Vero solo sul Mac: su Windows Apple Books non c'e' e le sue funzioni restano nascoste. */
+  readonly appleBooks: boolean;
+  /** `localServer`: il server gira dentro l'app (modalita' locale); `appleBooks` come sopra. */
+  info(): Promise<DesktopResult<{ version: string; appleBooks: boolean; localServer: boolean }>>;
+  /** Finestra di scelta cartella (solo in modalita' locale); `null` se l'utente annulla. */
+  pickFolder(): Promise<DesktopResult<{ path: string | null }>>;
   appleBooksRead(): Promise<DesktopResult<AppleBooksRawData>>;
   appleBooksStatus(meta: BookMeta): Promise<DesktopResult<AppleBooksWriteStatus>>;
   appleBooksWrite(args: {
@@ -38,6 +43,13 @@ export function desktop(): BooksDesktop | undefined {
   return typeof window === 'undefined' ? undefined : window.booksDesktop;
 }
 
+/** Il ponte se esiste e se l'app puo' parlare con Apple Books (Mac); su Windows `undefined`. */
+export function appleBridge(): BooksDesktop | undefined {
+  const bridge = desktop();
+  // `!== false`: le versioni vecchie dell'app non espongono il campo e girano solo sul Mac.
+  return bridge && bridge.appleBooks !== false ? bridge : undefined;
+}
+
 /** Errore del ponte con il codice (`running` = Apple Books e' aperto). */
 export class DesktopError extends Error {
   code: 'running' | 'failed';
@@ -58,7 +70,7 @@ export function unwrap<T>(result: DesktopResult<T>): T {
 export async function importAppleBooksViaApp(
   options: { dryRun?: boolean; bookIds?: string[] } = {},
 ): Promise<AppleBooksImportResult> {
-  const bridge = desktop();
+  const bridge = appleBridge();
   if (!bridge) throw new Error('Disponibile nell\'app per Mac');
   const data = unwrap(await bridge.appleBooksRead());
   return api.importAppleBooksData(data, options);
@@ -69,7 +81,7 @@ export async function importAppleBooksViaApp(
  * avanzamento e date ai libri appena aggiunti. Gli errori restano in console.
  */
 export async function syncAppleBooksFromApp(bookIds: string[]): Promise<void> {
-  if (!bookIds.length || !desktop()) return;
+  if (!bookIds.length || !appleBridge()) return;
   try {
     // Con il server in locale sul Mac la sincronizzazione la fa gia' lui.
     if ((await api.appleBooksCapabilities()).local) return;
@@ -180,7 +192,7 @@ async function refreshAfterSync(): Promise<void> {
  * browser, con il server in locale sul Mac o se l'utente l'ha spenta.
  */
 export function startAppleBooksAutoSync(): void {
-  const bridge = desktop();
+  const bridge = appleBridge();
   if (!bridge || stopAutoSync || autoSyncStarting || !useStore.getState().appleSync.enabled) return;
   autoSyncStarting = true;
   void (async () => {

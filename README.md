@@ -693,48 +693,83 @@ iPad le annotazioni arrivano al database del Mac tramite iCloud; in alternativa
 puoi estrarre il container da un backup non cifrato e impostare
 `APPLE_BOOKS_CONTAINER` sulla sua cartella `Data/Documents`.
 
-### App per Mac
+### App desktop
 
-Il server può stare su un'altra macchina (Linux, Docker): in quel caso l'import da
-Apple Books, la scrittura su Apple Books e «Apri in Libri» hanno bisogno del Mac.
-L'app in `desktop/` (Electron, `.dmg` per Apple Silicon) apre il tuo server in una
-finestra e aggiunge queste funzioni, che nel browser non compaiono:
+L'app in `desktop/` (Electron) è disponibile per **Mac** (Apple Silicon e Intel) e per
+**Windows** (64 bit) e funziona in due modi, che scegli al primo avvio:
+
+- **Su questo computer** (consigliata): il server di Books Editor gira dentro l'app, solo
+  su `127.0.0.1`, e i libri stanno in una cartella a tua scelta (proposta:
+  `Documenti/Books Editor`). Non serve nessun server, nessun account e nessun login.
+  Alla chiusura dell'app il server si ferma.
+- **Collegati a un server**: apre il tuo server (`http://` o `https://`, verificato con
+  `/api/health`) in una finestra, come prima. Chi aveva già un indirizzo salvato resta in
+  questa modalità senza domande.
+
+Si cambia da **Books Editor → Cambia modalità…**. In modalità locale la cartella dei
+libri si cambia da **Impostazioni → Cartella della libreria → Scegli…**.
+
+**Download.** I pacchetti sono nella pagina [Releases](../../releases) del repository:
+`Books-Editor-<versione>-mac-arm64.dmg` (Mac con chip Apple), `…-mac-x64.dmg` (Mac Intel) e
+`Books-Editor-<versione>-win-x64.exe` (installer per Windows, nella cartella
+che scegli, senza diritti di amministratore).
+
+**App non firmate.** I pacchetti non sono firmati né notarizzati:
+- su **macOS**, al primo avvio fai clic destro sull'app → **Apri**; oppure, se il sistema
+  la blocca, **Impostazioni di Sistema → Privacy e sicurezza → «Apri comunque»**;
+- su **Windows**, SmartScreen mostra «Windows ha protetto il PC»: **Ulteriori informazioni →
+  Esegui comunque**.
+
+**Dove stanno i dati.** I libri nella cartella scelta (una sottocartella per libro, con
+`book.json`). Indice, impostazioni, librerie aggiuntive e log del server stanno nella
+cartella dell'app: `~/Library/Application Support/Books Editor` su Mac,
+`%APPDATA%\Books Editor` su Windows (sottocartelle `data`, `librerie`, `logs`). Per
+disinstallare basta eliminare l'app: i libri non si toccano.
+
+**Conversioni.** MOBI, AZW3, FB2 e DJVU si convertono se sono installati
+[Calibre](https://calibre-ebook.com) (e, per i DJVU scansionati, djvulibre); l'app li
+trova nelle cartelle standard (anche su Windows). Senza, le conversioni restano
+disattivate e il resto funziona.
+
+**Apple Books (solo Mac).** L'app aggiunge funzioni che nel browser non compaiono:
 
 1. **Importa da Apple Books**: sottolineature, note, avanzamento e date di fine lettura.
-   L'app legge i database di Libri sul Mac e la pagina li invia al server.
+   Con il server su un altro computer l'app legge i database di Libri sul Mac e la pagina
+   li invia al server; in modalità locale il server li legge da solo.
 2. **Scrivi su Apple Books**: titolo, autori e copertina nella cartella iCloud di Libri,
    con backup in `~/Library/Application Support/Books Editor/applebooks-backups`.
 3. **Apri in Libri**: apre l'EPUB, con i metadati della scheda, nell'app Libri.
 
-L'app lavora solo su dati locali e non fa richieste autenticate al server: è la pagina
-web, con la propria sessione, a parlare con il server e a passare i dati all'app.
-Dopo aver aggiunto un'opera la sincronizzazione con Apple Books parte da sola.
+Su Windows queste funzioni non esistono e l'interfaccia le nasconde. L'app lavora solo su
+dati locali e non fa richieste autenticate al server: è la pagina web, con la propria
+sessione, a parlare con il server e a passare i dati all'app. Per leggere i database di
+Libri macOS può chiedere il permesso «accesso ai dati di altre app» (o l'accesso completo
+al disco): concedilo a Books Editor in **Impostazioni di Sistema → Privacy e sicurezza**.
 
-**Compilazione** (serve Node 22 o più recente):
+**Sicurezza in modalità locale.** Il server ascolta solo su `127.0.0.1` e ogni richiesta
+all'API richiede un cookie con un token casuale, generato a ogni avvio e noto solo alla
+finestra dell'app (variabile `DESKTOP_TOKEN`): un altro programma o una pagina web aperta
+nel browser non possono usarla.
+
+**Compilazione** (serve Node 22 o più recente; dalla radice, una volta):
 
 ```bash
+npm install
+npm run build        # server (server/dist) e interfaccia (web/dist)
 cd desktop
 npm install
-npm run dist       # crea release/Books Editor-<versione>-arm64.dmg
+npm run dist:mac-arm64   # release/Books-Editor-<versione>-mac-arm64.dmg
+npm run dist:mac-x64     # ... -mac-x64.dmg
+npm run dist:win         # ... -win-x64.exe (da Mac o Linux serve wine per icona e versione)
 ```
 
-`npm run build` compila solo main e preload; `npm run start` avvia l'app in sviluppo.
-`desktop/` ha il suo `package.json` e non fa parte dei workspace: la build Docker del
-server non installa Electron.
-
-**Primo avvio.** L'app chiede l'indirizzo del server (`http://` o `https://`), verifica
-`/api/health` e lo ricorda; lo cambi da **Books Editor → Cambia server…**. L'accesso
-(login) resta salvato fra un avvio e l'altro.
-
-**App non firmata.** Il `.dmg` è firmato solo in modo ad-hoc, senza notarizzazione. Se
-lo scarichi da Internet, al primo avvio fai clic destro sull'app → **Apri**. Un'app
-compilata sul tuo Mac non ha questo problema.
-
-**Permessi di macOS.** Per leggere i database di Libri macOS può chiedere il permesso
-«accesso ai dati di altre app» (o l'accesso completo al disco): concedilo a Books Editor
-in **Impostazioni di Sistema → Privacy e sicurezza**.
-
-Fuori casa usa il sito dal browser: le funzioni Apple compaiono solo nell'app.
+`npm run build` in `desktop/` compila main, preload e il server impacchettato
+(`desktop/server-dist`); `npm run start` avvia l'app in sviluppo. `desktop/` ha il suo
+`package.json` e non fa parte dei workspace: la build Docker del server non installa
+Electron. Il server è un unico file (esbuild) con `@napi-rs/canvas` (il binario del
+sistema di destinazione, scaricato da npm) e `pdfjs-dist` accanto, in `Resources/server`.
+Il workflow `.github/workflows/desktop.yml` costruisce tutto e allega i pacchetti alla
+Release quando si pubblica un tag `desktop-v*` (o a mano da **Actions**).
 
 ### PDF / DOCX / TXT
 

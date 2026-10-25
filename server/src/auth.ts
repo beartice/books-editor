@@ -11,6 +11,7 @@ import {
   CORS_ORIGINS,
   DATA_DIR,
   DEFAULT_LIBRARY_ROOT,
+  DESKTOP_TOKEN,
   IS_PRODUCTION,
   LIBRARY_ROOT_LOCKED,
   SESSION_DAYS,
@@ -22,6 +23,7 @@ import { loadSettings, saveSettings } from './store.js';
 import { scanLibrary } from './library.js';
 
 const COOKIE_NAME = 'be_session';
+const DESKTOP_COOKIE = 'be_desktop';
 const MAX_FAILURES = 5;
 const WINDOW_MS = 15 * 60 * 1000;
 const FAIL_DELAY_MS = 500;
@@ -139,6 +141,13 @@ function readAuthFile(): Credentials | null {
 
 /** Calcola le credenziali: prima l'ambiente, poi auth.json. Lancia se la configurazione e' invalida. */
 function loadState(): void {
+  if (DESKTOP_TOKEN) {
+    // App desktop locale: nessun account, l'accesso e' il cookie dell'app (vedi desktopAuthed).
+    if (DESKTOP_TOKEN.length < 32) throw new Error('DESKTOP_TOKEN deve avere almeno 32 caratteri');
+    credentials = null;
+    stateLoaded = true;
+    return;
+  }
   if (AUTH_USER) {
     const parsed = AUTH_PASS_HASH ? parseHash(AUTH_PASS_HASH) : null;
     if (AUTH_PASS_HASH && !parsed) {
@@ -156,12 +165,12 @@ function loadState(): void {
 
 /** Nessun account e autenticazione non disattivata esplicitamente: serve la configurazione. */
 function setupRequired(): boolean {
-  return !credentials && !AUTH_DISABLED;
+  return !credentials && !AUTH_DISABLED && !DESKTOP_TOKEN;
 }
 
 /** Autenticazione attiva (account presente o configurazione da fare): l'app non e' mai aperta. */
 function authEnabled(): boolean {
-  return Boolean(credentials) || !AUTH_DISABLED;
+  return Boolean(credentials) || (!AUTH_DISABLED && !DESKTOP_TOKEN);
 }
 
 async function verifyPassword(creds: Credentials, password: string): Promise<boolean> {
@@ -315,6 +324,13 @@ function sessionUser(request: FastifyRequest): string | null {
   return token ? verifyToken(token) : null;
 }
 
+/** App desktop locale: la richiesta porta il cookie con il token generato dall'app (confronto a tempo costante). */
+function desktopAuthed(request: FastifyRequest): boolean {
+  if (!DESKTOP_TOKEN) return false;
+  const given = readCookie(request, DESKTOP_COOKIE);
+  return given !== null && safeEqual(given, DESKTOP_TOKEN);
+}
+
 function cookieHeader(request: FastifyRequest, value: string, maxAgeSeconds: number): string {
   const attrs = [`${COOKIE_NAME}=${value}`, 'Path=/', 'HttpOnly', 'SameSite=Strict', `Max-Age=${maxAgeSeconds}`];
   if (request.protocol === 'https') attrs.push('Secure');
@@ -440,6 +456,11 @@ export function registerAuth(app: FastifyInstance): void {
   app.addHook('onRequest', async (request, reply) => {
     const pathname = securityPath(request);
     if (!isApiPath(pathname)) return;
+    if (DESKTOP_TOKEN) {
+      // Senza il cookie dell'app (ad esempio da un altro programma sul computer) l'API e' chiusa.
+      if (pathname === '/api/health' || pathname === '/api/auth/me' || desktopAuthed(request)) return;
+      return reply.code(401).send({ error: 'Accesso richiesto' });
+    }
     if (setupRequired()) {
       if (openInSetup.has(pathname)) return;
       return reply.code(403).send({ error: 'Configurazione iniziale richiesta', setupRequired: true });
@@ -587,6 +608,18 @@ export function registerAuth(app: FastifyInstance): void {
   });
 
   app.get('/api/auth/me', async (request) => {
+    if (DESKTOP_TOKEN) {
+      // `authEnabled: false` nasconde in interfaccia account ed uscita.
+      return {
+        authEnabled: false,
+        authenticated: desktopAuthed(request),
+        user: 'locale',
+        desktop: true,
+        setupRequired: false,
+        setupCodeRequired: false,
+        credentialsSource: null,
+      };
+    }
     const needSetup = setupRequired();
     // Il percorso della libreria si mostra solo a chi e' in locale o se e' fissato dal server.
     const setupInfo = needSetup

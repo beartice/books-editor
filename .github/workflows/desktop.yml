@@ -1,0 +1,86 @@
+# App desktop (Mac e Windows): costruisce i pacchetti e li allega alla Release del tag.
+#   - tag `desktop-v*`: costruisce e pubblica sulla Release di quel tag;
+#   - avvio manuale: costruisce e, se si indica un tag, pubblica sulla Release di quel tag.
+name: App desktop
+
+on:
+  push:
+    tags:
+      - 'desktop-v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag della Release a cui allegare i pacchetti (vuoto = solo costruzione)'
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  mac:
+    name: dmg (macOS)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4.2.2
+      - uses: actions/setup-node@v4.4.0
+        with:
+          node-version: '22'
+      - name: Compila server e interfaccia
+        run: |
+          npm ci
+          npm run build
+      - name: Pacchetti per Apple Silicon e Intel
+        working-directory: desktop
+        run: |
+          npm ci
+          npm run dist:mac-arm64
+          npm run dist:mac-x64
+      - uses: actions/upload-artifact@v4.6.2
+        with:
+          name: mac
+          path: desktop/release/*.dmg
+          if-no-files-found: error
+
+  windows:
+    name: exe (Windows)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4.2.2
+      - uses: actions/setup-node@v4.4.0
+        with:
+          node-version: '22'
+      - name: Compila server e interfaccia
+        shell: bash
+        run: |
+          npm ci
+          npm run build
+      - name: Installer per Windows
+        shell: bash
+        working-directory: desktop
+        run: |
+          npm ci
+          npm run dist:win
+      - uses: actions/upload-artifact@v4.6.2
+        with:
+          name: windows
+          path: desktop/release/*.exe
+          if-no-files-found: error
+
+  release:
+    name: Release
+    needs: [mac, windows]
+    if: github.event_name == 'push' || inputs.tag != ''
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4.3.0
+        with:
+          path: pacchetti
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v2.2.2
+        with:
+          tag_name: ${{ github.event_name == 'push' && github.ref_name || inputs.tag }}
+          files: pacchetti/*
+          fail_on_unmatched_files: true

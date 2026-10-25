@@ -19,7 +19,7 @@ import HighlightsTab from './HighlightsTab';
 import LanguagesSection from './LanguagesSection';
 import MoveBookMenu from './MoveBookMenu';
 import AppleBooksDialog from './AppleBooksDialog';
-import { desktop, unwrap } from '../desktop';
+import { appleBridge, desktop, unwrap } from '../desktop';
 import {
   IconClose,
   IconCloud,
@@ -311,7 +311,7 @@ export default function DetailPanel({
     if (!detailId || !appleId) return;
     let cancelled = false;
     // Nell'app per Mac lo stato viene dal ponte (Apple Books e' sul Mac); nel browser dal server.
-    const bridge = desktop();
+    const bridge = appleBridge();
     (bridge && detail
       ? bridge.appleBooksStatus(detail).then(unwrap)
       : api.appleBooksStatus(detailId)
@@ -463,7 +463,7 @@ export default function DetailPanel({
 
   // App per Mac: scarica l'EPUB con i metadati della scheda e lo passa a Libri.
   const handleOpenInBooksApp = async (file: string) => {
-    const bridge = desktop();
+    const bridge = appleBridge();
     if (!bridge) return;
     setOpeningBooks(file);
     try {
@@ -740,7 +740,7 @@ export default function DetailPanel({
                     </button>
                   ),
                 )}
-                {desktop() && shareFiles.length > 0 && (
+                {appleBridge() && shareFiles.length > 0 && (
                   <div ref={shareMenuRef} className="relative">
                     <button
                       onClick={() => {

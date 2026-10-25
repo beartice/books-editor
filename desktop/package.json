@@ -1,9 +1,9 @@
 {
   "name": "books-editor-desktop",
   "productName": "Books Editor",
-  "version": "1.0.3",
+  "version": "2.0.0",
   "private": true,
-  "description": "App per Mac di Books Editor: apre il server e aggiunge le funzioni di Apple Books.",
+  "description": "Books Editor per Mac e Windows: la libreria su questo computer, oppure collegata a un server.",
   "author": "Books Editor",
   "license": "GPL-3.0-or-later",
   "engines": {
@@ -13,13 +13,14 @@
   "scripts": {
     "build": "node build.mjs",
     "start": "npm run build && env -u ELECTRON_RUN_AS_NODE electron .",
-    "dist": "npm run build && electron-builder --mac dmg --arm64",
+    "dist": "npm run dist:mac-arm64",
+    "dist:mac-arm64": "node build.mjs --target=darwin-arm64 && electron-builder --mac dmg --arm64",
+    "dist:mac-x64": "node build.mjs --target=darwin-x64 && electron-builder --mac dmg --x64",
+    "dist:win": "node build.mjs --target=win32-x64 && electron-builder --win nsis --x64",
     "typecheck": "tsc --noEmit"
   },
-  "dependencies": {
-    "@napi-rs/canvas": "^0.1.100"
-  },
   "devDependencies": {
+    "@napi-rs/canvas": "^0.1.100",
     "@types/adm-zip": "^0.5.7",
     "@types/node": "^22.10.2",
     "adm-zip": "^0.5.16",
@@ -46,16 +47,46 @@
         {
           "target": "dmg",
           "arch": [
-            "arm64"
+            "arm64",
+            "x64"
           ]
         }
       ],
       "identity": "-",
       "hardenedRuntime": false,
-      "icon": "build/icon.icns"
+      "icon": "build/icon.icns",
+      "artifactName": "Books-Editor-${version}-mac-${arch}.${ext}"
     },
     "dmg": {
       "title": "Books Editor"
-    }
+    },
+    "extraResources": [
+      {
+        "from": "server-dist",
+        "to": "server"
+      }
+    ],
+    "win": {
+      "icon": "build/icon.ico",
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "artifactName": "Books-Editor-${version}-win-${arch}.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Books Editor",
+      "deleteAppDataOnUninstall": false
+    },
+    "afterPack": "afterPack.cjs"
   }
 }
