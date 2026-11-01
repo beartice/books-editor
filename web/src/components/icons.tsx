@@ -196,6 +196,20 @@ export const IconChart = (p: P) => (
   </svg>
 );
 
+export const IconCompass = (p: P) => (
+  <svg {...base(p)}>
+    <circle cx="12" cy="12" r="9" />
+    <path d="m15.5 8.5-2 5-5 2 2-5z" />
+  </svg>
+);
+
+export const IconAlert = (p: P) => (
+  <svg {...base(p)}>
+    <path d="M12 3.5 2.5 20h19z" />
+    <path d="M12 10v4.5M12 17.5v.01" />
+  </svg>
+);
+
 export const IconLogout = (p: P) => (
   <svg {...base(p)}>
     <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />

@@ -221,6 +221,8 @@ export interface BookMeta {
   fanficUpdate?: FanficUpdate | null;
   /** Invio dei metadati a Jellyfin. Gestito solo dal server. */
   jellyfinSync?: JellyfinSyncInfo | null;
+  /** «Non mi interessa» in «Cosa leggere dopo». Gestito solo dal server: non si modifica via PATCH. */
+  recommendationDismissed?: boolean;
 
   /* --- campi personali --- */
   notes: string;
@@ -769,4 +771,35 @@ export interface ReadingStats {
   };
   /** Opere aggiunte nella finestra (data di Apple Books se c'e', altrimenti `dateAdded`). */
   added: { total: number; byMonth: { month: string; count: number; ids: string[] }[]; busiest: { month: string; count: number } | null };
+}
+
+/** Una motivazione di un suggerimento di lettura. */
+export interface RecommendationReason {
+  /** `caution` e' un avvertimento (es. un libro dello stesso autore abbandonato). */
+  kind: 'series' | 'author' | 'tags' | 'fandom' | 'plot' | 'caution';
+  text: string;
+}
+
+/** Un libro non letto consigliato; il punteggio serve solo a ordinare. */
+export interface BookRecommendation {
+  id: string;
+  score: number;
+  reasons: RecommendationReason[];
+}
+
+/** Risposta di `GET /api/recommendations` (libreria aperta, fanfic nascoste escluse). */
+export interface RecommendationsResult {
+  /** false se i libri con un voto o uno stato non bastano: le liste sono vuote. */
+  enough: boolean;
+  /** Prossimo volume delle serie iniziate. */
+  seriesNext: BookRecommendation[];
+  /** «Libri per te»: libri con un autore gradito in comune. */
+  booksByAuthor: BookRecommendation[];
+  /** «Da esplorare»: altri libri, scelti solo per generi e trama. */
+  booksToExplore: BookRecommendation[];
+  /** «Fanfic per te». Ogni sezione ha il suo ordine: i punteggi di libri e fanfic non si confrontano. */
+  fanfics: BookRecommendation[];
+  /** Libri nascosti con «Non mi interessa». */
+  dismissed: string[];
+  basedOn: { read: number; rated: number; abandoned: number; favorites: number };
 }

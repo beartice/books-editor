@@ -76,6 +76,11 @@ import {
   updateFanficStory,
 } from './fanficUpdates.js';
 import { getJellyfinInfo, listJellyfinLibraries } from './jellyfin.js';
+import {
+  computeRecommendations,
+  DEFAULT_RECOMMENDATION_LIMIT,
+  MAX_RECOMMENDATION_LIMIT,
+} from './recommendations.js';
 import { getJellyfinSyncState, pushBookNow, startJellyfinSync } from './jellyfinSync.js';
 import type { DuplicateMatch, PreparedImport } from './library.js';
 import { HIGHLIGHT_COLORS, READING_STATUSES } from '../../shared/types.js';
@@ -1460,6 +1465,45 @@ export async function registerApi(app: FastifyInstance): Promise<void> {
   );
 
   app.get('/api/stats', async () => statsFor(visibleBooks(currentLibrary(), await loadIndex())));
+
+  /** «Cosa leggere dopo»: suggerimenti fra i libri non letti della libreria aperta (nessun servizio esterno). */
+  app.get<{ Querystring: { limit?: string } }>('/api/recommendations', async (request, reply) => {
+    let limit = DEFAULT_RECOMMENDATION_LIMIT;
+    if (request.query.limit !== undefined) {
+      const raw = request.query.limit.trim();
+      limit = /^\d+$/.test(raw) ? Number(raw) : 0;
+      if (limit < 1 || limit > MAX_RECOMMENDATION_LIMIT) {
+        return reply
+          .code(400)
+          .send({ error: `Limite non valido: indica un numero da 1 a ${MAX_RECOMMENDATION_LIMIT}` });
+      }
+    }
+    return computeRecommendations(visibleBooks(currentLibrary(), await loadIndex()), { limit });
+  });
+
+  /** «Non mi interessa» (o «Ripristina») per un suggerimento: campo gestito dal server, non e' una modifica della scheda. */
+  app.post<{ Params: { id: string }; Body: { dismissed?: unknown } | undefined }>(
+    '/api/books/:id/recommendation',
+    async (request, reply) => {
+      const dismissed = request.body?.dismissed;
+      if (typeof dismissed !== 'boolean') {
+        return reply.code(400).send({ error: 'Indica se nascondere il suggerimento (dismissed: true o false)' });
+      }
+      if (!(await getBookMeta(request.params.id))) return reply.code(404).send({ error: 'Libro non trovato' });
+      try {
+        // Come `fanficUpdate`: niente data di modifica, niente provenienza del campo, nessun invio a Jellyfin.
+        await updateBook(
+          request.params.id,
+          { recommendationDismissed: dismissed },
+          'manual',
+          { touch: false, clearSources: ['recommendationDismissed'] },
+        );
+        return { ok: true, dismissed };
+      } catch (error) {
+        return reply.code(404).send({ error: (error as Error).message });
+      }
+    },
+  );
 
   /** Statistiche di lettura per la vista «Statistiche»: `year` e' un anno (AAAA) oppure `all`. */
   app.get<{ Querystring: { year?: string } }>('/api/stats/reading', async (request, reply) => {

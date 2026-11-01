@@ -15,6 +15,7 @@ import type {
   HighlightColor,
   LibraryStats,
   ReadingStats,
+  RecommendationsResult,
   LibrarySummary,
   LookupResult,
   MetadataCandidate,
@@ -234,6 +235,14 @@ export const api = {
   books: () => request<{ books: BookSummary[]; stats: LibraryStats }>('/books'),
   /** Statistiche di lettura: un anno (AAAA) oppure `all`. */
   readingStats: (year: number | 'all') => request<ReadingStats>(`/stats/reading?year=${year}`),
+  /** «Cosa leggere dopo»: suggerimenti fra i libri non letti. */
+  recommendations: () => request<RecommendationsResult>('/recommendations'),
+  /** Nasconde (o ripristina) un libro dai suggerimenti. */
+  dismissRecommendation: (id: string, dismissed: boolean) =>
+    request<{ ok: boolean; dismissed: boolean }>(`/books/${id}/recommendation`, {
+      method: 'POST',
+      body: JSON.stringify({ dismissed }),
+    }),
   book: (id: string) => request<BookMeta>(`/books/${id}`),
   updateBook: (id: string, patch: Partial<BookMeta>) =>
     request<BookMeta>(`/books/${id}`, { method: 'PATCH', body: JSON.stringify(patch) }),

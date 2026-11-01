@@ -261,7 +261,7 @@ export default function DetailPanel({
   const { detail, select, patchDetail, detailTab, setDetailTab, busy, openReader, resetReading } = useStore();
   const { lookupAttempted, runLookup } = useStore();
   // Aperta dalle statistiche (z-50) deve stare sopra di loro.
-  const statsOpen = useStore((state) => state.statsOpen);
+  const statsOpen = useStore((state) => state.statsOpen || state.recommendationsOpen);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [downloading, setDownloading] = useState<string | null>(null);
   const [confirmWrite, setConfirmWrite] = useState(false);

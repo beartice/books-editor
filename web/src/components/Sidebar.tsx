@@ -9,6 +9,7 @@ import {
   IconChart,
   IconChevron,
   IconClose,
+  IconCompass,
   IconFilter,
   IconGrid,
   IconHeart,
@@ -26,6 +27,7 @@ interface Props {
   onOpenSettings: () => void;
   onOpenSeries: () => void;
   onOpenStats: () => void;
+  onOpenRecommendations: () => void;
   mobileOpen: boolean;
   onClose: () => void;
 }
@@ -87,6 +89,7 @@ export default function Sidebar({
   onOpenSettings,
   onOpenSeries,
   onOpenStats,
+  onOpenRecommendations,
   mobileOpen,
   onClose,
 }: Props) {
@@ -279,6 +282,19 @@ export default function Sidebar({
                   {facets.series.length}
                 </span>
               )}
+            </button>
+
+            <button
+              onClick={() => {
+                onClose();
+                onOpenRecommendations();
+              }}
+              className="group flex w-full items-center gap-3 rounded-xl px-2 py-1.5 text-left transition hover:bg-black/[0.025]"
+            >
+              <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[10px] bg-ink-800 text-ink-400 transition group-hover:bg-ink-750 group-hover:text-ink-200">
+                <IconCompass className="h-4 w-4" />
+              </span>
+              <span className="text-[12.5px] font-medium text-ink-400">Cosa leggere dopo</span>
             </button>
 
             <button

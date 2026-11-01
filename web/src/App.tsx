@@ -10,6 +10,7 @@ import DetailPanel from './components/DetailPanel';
 import ImportDialog from './components/ImportDialog';
 import SettingsDialog from './components/SettingsDialog';
 import SeriesDialog from './components/SeriesDialog';
+import RecommendationsView from './components/RecommendationsView';
 import StatsView from './components/StatsView';
 import LoginPage from './components/LoginPage';
 import SetupPage from './components/SetupPage';
@@ -58,6 +59,8 @@ export default function App() {
     setSettingsOpen,
     statsOpen,
     setStatsOpen,
+    recommendationsOpen,
+    setRecommendationsOpen,
   } = useStore();
   const libraryName = useStore(libraryNameOf);
   const [showImport, setShowImport] = useState(false);
@@ -140,6 +143,7 @@ export default function App() {
           onOpenSettings={openSettings}
           onOpenSeries={() => openSeries()}
           onOpenStats={() => setStatsOpen(true)}
+          onOpenRecommendations={() => setRecommendationsOpen(true)}
           mobileOpen={mobileFilters}
           onClose={() => setMobileFilters(false)}
         />
@@ -255,6 +259,7 @@ export default function App() {
         />
       )}
       {statsOpen && <StatsView onClose={() => setStatsOpen(false)} />}
+      {recommendationsOpen && <RecommendationsView onClose={() => setRecommendationsOpen(false)} />}
       {reader && (
         <Suspense
           fallback={

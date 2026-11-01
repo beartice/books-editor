@@ -256,6 +256,8 @@ interface State {
   settingsOpen: boolean;
   /** Statistiche aperte: la scheda dell'opera deve stare sopra di loro. */
   statsOpen: boolean;
+  /** «Cosa leggere dopo» aperta: la scheda dell'opera deve stare sopra. */
+  recommendationsOpen: boolean;
   toasts: Toast[];
   /** Autenticazione: stato verificato con /auth/me, login richiesto, messaggio per la pagina di login. */
   authChecked: boolean;
@@ -302,6 +304,7 @@ interface State {
   resetReading: () => Promise<void>;
   setSettingsOpen: (open: boolean) => void;
   setStatsOpen: (open: boolean) => void;
+  setRecommendationsOpen: (open: boolean) => void;
   /** Applica alla griglia un filtro che arriva dalle statistiche (sostituisce filtri e ricerca). */
   applyStatsFilter: (filters: Partial<Filters>) => void;
   patchDetail: (patch: Partial<BookMeta>) => Promise<void>;
@@ -447,6 +450,7 @@ export const useStore = create<State>((set, get) => ({
   lookupAttempted: false,
   settingsOpen: false,
   statsOpen: false,
+  recommendationsOpen: false,
   toasts: [],
   authChecked: false,
   authEnabled: false,
@@ -690,6 +694,7 @@ export const useStore = create<State>((set, get) => ({
 
   setSettingsOpen: (settingsOpen) => set({ settingsOpen }),
   setStatsOpen: (statsOpen) => set({ statsOpen }),
+  setRecommendationsOpen: (recommendationsOpen) => set({ recommendationsOpen }),
   applyStatsFilter: (filters) => set({ filters: { ...EMPTY_FILTERS, ...filters }, query: '' }),
 
   // Il lettore ha una voce di cronologia propria: «Indietro», Esc e lo swipe di iOS lo chiudono.
