@@ -196,6 +196,13 @@ export const IconChart = (p: P) => (
   </svg>
 );
 
+export const IconDice = (p: P) => (
+  <svg {...base(p)}>
+    <rect x="3.5" y="3.5" width="17" height="17" rx="3.5" />
+    <path d="M8.5 8.5h.01M15.5 8.5h.01M12 12h.01M8.5 15.5h.01M15.5 15.5h.01" strokeWidth="2.4" />
+  </svg>
+);
+
 export const IconCompass = (p: P) => (
   <svg {...base(p)}>
     <circle cx="12" cy="12" r="9" />

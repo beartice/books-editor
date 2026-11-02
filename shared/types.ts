@@ -787,10 +787,20 @@ export interface BookRecommendation {
   reasons: RecommendationReason[];
 }
 
+/** Una voce del gusto dell'utente: un autore, un tag o una fascia di lunghezza. */
+export interface TasteItem {
+  kind: 'author' | 'tag' | 'length';
+  label: string;
+  /** I libri che hanno fatto pesare la voce (al massimo 8). */
+  bookIds: string[];
+}
+
 /** Risposta di `GET /api/recommendations` (libreria aperta, fanfic nascoste escluse). */
 export interface RecommendationsResult {
   /** false se i libri con un voto o uno stato non bastano: le liste sono vuote. */
   enough: boolean;
+  /** Cosa pesa nei suggerimenti; liste vuote se `enough` e' falso. */
+  taste: { liked: TasteItem[]; disliked: TasteItem[] };
   /** Prossimo volume delle serie iniziate. */
   seriesNext: BookRecommendation[];
   /** «Libri per te»: libri con un autore gradito in comune. */
@@ -842,4 +852,21 @@ export interface TagCleanupPlan {
 export interface TagCleanupSelection {
   id: string;
   canonical?: string;
+}
+
+/** «Libro del mese»: risposta di `GET /api/monthly-pick`. */
+export interface MonthlyPickResult {
+  /** Mese della scelta, AAAA-MM. */
+  month: string;
+  /** Giorni fino alla fine del mese, oggi compreso. */
+  daysLeft: number;
+  book: { id: string; status: 'unread' | 'reading' | 'finished' } | null;
+  /** La fascia e' nascosta fino a fine mese. */
+  hidden: boolean;
+  /** Libri tra cui si e' pescato, compreso quello scelto. */
+  poolSize: number;
+  /** Tempo di lettura rimasto, secondo le parole e la velocita' delle impostazioni. */
+  estimate: { minutes: number; perDay: number } | null;
+  /** Gli ultimi mesi, dal piu' recente. */
+  history: { month: string; bookId: string; finished: boolean }[];
 }

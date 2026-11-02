@@ -10,6 +10,7 @@ import DetailPanel from './components/DetailPanel';
 import ImportDialog from './components/ImportDialog';
 import SettingsDialog from './components/SettingsDialog';
 import SeriesDialog from './components/SeriesDialog';
+import MonthlyPick from './components/MonthlyPick';
 import RecommendationsView from './components/RecommendationsView';
 import StatsView from './components/StatsView';
 import LoginPage from './components/LoginPage';
@@ -158,6 +159,8 @@ export default function App() {
             />
 
             <div className="relative -mt-7 rounded-t-[32px] bg-white px-4 pb-12 pt-5 sm:px-7 sm:pt-8 lg:px-10 lg:pb-16 lg:pt-9">
+              {currentPage === 1 && <MonthlyPick />}
+
               <section id="library" className="scroll-mt-6">
                 <div className="flex items-end justify-between gap-3 sm:flex-wrap sm:gap-4">
                   <div>

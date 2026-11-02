@@ -9,7 +9,7 @@ import { useStore } from './store';
  * vista «Cosa leggere dopo». Con `enabled` falso non chiede
  * nulla (la home con filtri attivi). Durante la ricarica l'elenco precedente resta visibile.
  */
-export function useRecommendations(enabled = true) {
+export function useRecommendations(enabled = true, limit?: number) {
   const libraryId = useStore((state) => state.libraryId);
   const selectedId = useStore((state) => state.selectedId);
   const [data, setData] = useState<RecommendationsResult | null>(null);
@@ -34,7 +34,7 @@ export function useRecommendations(enabled = true) {
     let cancelled = false;
     setError('');
     api
-      .recommendations()
+      .recommendations(limit)
       .then((result) => {
         if (!cancelled) setData(result);
       })
@@ -44,7 +44,7 @@ export function useRecommendations(enabled = true) {
     return () => {
       cancelled = true;
     };
-  }, [libraryId, attempt, enabled]);
+  }, [libraryId, attempt, enabled, limit]);
 
   // Cambio libreria: i suggerimenti dell'altra non servono piu'.
   useEffect(() => {

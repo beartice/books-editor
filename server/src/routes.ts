@@ -82,6 +82,7 @@ import {
   currentTagCleanupPlan,
   undoLastTagCleanup,
 } from './tagCleanup.js';
+import { MonthlyPickError, getMonthlyPick, rerollMonthlyPick, setMonthlyPickHidden } from './monthlyPick.js';
 import {
   computeRecommendations,
   DEFAULT_RECOMMENDATION_LIMIT,
@@ -1508,6 +1509,26 @@ export async function registerApi(app: FastifyInstance): Promise<void> {
       if (error instanceof TagCleanupError) return reply.code(404).send({ error: error.message });
       throw error;
     }
+  });
+
+  /* ------------------------------------------------ libro del mese -- */
+  app.get('/api/monthly-pick', async () => getMonthlyPick());
+
+  app.post('/api/monthly-pick/reroll', async (_request, reply) => {
+    try {
+      return await rerollMonthlyPick();
+    } catch (error) {
+      if (error instanceof MonthlyPickError) return reply.code(409).send({ error: error.message });
+      throw error;
+    }
+  });
+
+  app.post<{ Body: { hidden?: unknown } | undefined }>('/api/monthly-pick/hide', async (request, reply) => {
+    const hidden = request.body?.hidden;
+    if (typeof hidden !== 'boolean') {
+      return reply.code(400).send({ error: 'Indica se nascondere la fascia (hidden: true o false)' });
+    }
+    return setMonthlyPickHidden(hidden);
   });
 
   /** «Cosa leggere dopo»: suggerimenti fra i libri non letti della libreria aperta (nessun servizio esterno). */

@@ -15,6 +15,7 @@ import type {
   HighlightColor,
   LibraryStats,
   ReadingStats,
+  MonthlyPickResult,
   RecommendationsResult,
   TagCleanupPlan,
   TagCleanupSelection,
@@ -247,7 +248,13 @@ export const api = {
   undoTagCleanup: () =>
     request<{ restored: number; skipped: number }>('/tags/cleanup/undo', { method: 'POST' }),
   /** «Cosa leggere dopo»: suggerimenti fra i libri non letti. */
-  recommendations: () => request<RecommendationsResult>('/recommendations'),
+  recommendations: (limit?: number) =>
+    request<RecommendationsResult>(`/recommendations${limit ? `?limit=${limit}` : ''}`),
+  /** «Libro del mese»: la scelta del mese, un'altra scelta, mostra o nascondi la fascia. */
+  monthlyPick: () => request<MonthlyPickResult>('/monthly-pick'),
+  rerollMonthlyPick: () => request<MonthlyPickResult>('/monthly-pick/reroll', { method: 'POST' }),
+  hideMonthlyPick: (hidden: boolean) =>
+    request<MonthlyPickResult>('/monthly-pick/hide', { method: 'POST', body: JSON.stringify({ hidden }) }),
   /** Nasconde (o ripristina) un libro dai suggerimenti. */
   dismissRecommendation: (id: string, dismissed: boolean) =>
     request<{ ok: boolean; dismissed: boolean }>(`/books/${id}/recommendation`, {

@@ -1,5 +1,6 @@
 import type {
   BookMeta,
+  TasteItem,
   BookRecommendation,
   RecommendationReason,
   RecommendationsResult,
@@ -7,6 +8,7 @@ import type {
 import { bookGenres } from '../../shared/genres.js';
 import { htmlToText } from './htmlText.js';
 import { toIso6391 } from './language.js';
+import { cleanIncomingTags } from './tagRules.js';
 
 /*
  * «Cosa leggere dopo»: suggerimenti pescati solo fra i libri non letti della
@@ -203,7 +205,7 @@ function firstAuthor(book: BookMeta): string {
   return isAnonymousAuthor(key) ? '' : key;
 }
 
-function seriesKey(book: BookMeta): string {
+export function seriesKey(book: BookMeta): string {
   return norm(book.series ?? '');
 }
 
@@ -736,6 +738,33 @@ function buildReasons(scored: ScoredCandidate): BuiltReasons {
 
 /* --------------------------------------------------------------- serie -- */
 
+/** Libri raggruppati per nome di serie normalizzato (i libri senza serie non compaiono). */
+export function groupBySeries(books: BookMeta[]): Map<string, BookMeta[]> {
+  const bySeries = new Map<string, BookMeta[]>();
+  for (const book of books) {
+    const key = seriesKey(book);
+    if (!key) continue;
+    const list = bySeries.get(key) ?? [];
+    list.push(book);
+    bySeries.set(key, list);
+  }
+  return bySeries;
+}
+
+/**
+ * Il libro e' il volume non letto con l'indice minore della sua serie (o non ha serie).
+ * Un volume senza indice vale solo se nessun altro non letto ha un indice. Volumi in lettura,
+ * abbandonati o nascosti contano come «non letti»: sbarrano la strada ai successivi.
+ */
+export function isLowestUnreadVolume(book: BookMeta, bySeries: Map<string, BookMeta[]>): boolean {
+  const key = seriesKey(book);
+  if (!key) return true;
+  const pending = (bySeries.get(key) ?? []).filter((volume) => !isRead(volume));
+  const indexes = pending.map((volume) => volume.seriesIndex).filter((index): index is number => index !== null);
+  if (book.seriesIndex === null) return indexes.length === 0;
+  return book.seriesIndex === Math.min(...indexes);
+}
+
 const isRead = (book: BookMeta) => isFinished(book);
 
 /** Il primo volume non letto dopo l'ultimo letto di ogni serie iniziata. */
@@ -798,6 +827,107 @@ function seriesNextPicks(
   return picks.sort((a, b) => b.score - a.score);
 }
 
+/* ---------------------------------------------------------------- gusto -- */
+
+const TASTE_LIKED_AUTHORS = 5;
+const TASTE_LIKED_TAGS = 6;
+const TASTE_DISLIKED = 4;
+const TASTE_MIN_BOOKS = 2;
+const TASTE_BOOK_IDS = 8;
+/** Fascia di lunghezza «da evitare»: libri minimi e scarto dal tasso medio di abbandono. */
+const TASTE_BAND_MIN_BOOKS = 5;
+const TASTE_BAND_MIN_EXCESS = 0.15;
+
+const words = (value: number) => `${Math.round(value / 1000)}k`;
+
+/** Etichetta di una fascia di `LENGTH_BANDS`. */
+function bandLabel(band: number): string {
+  if (band === 0) return `Fino a ${words(LENGTH_BANDS[0])} parole`;
+  if (band >= LENGTH_BANDS.length) return `Oltre ${words(LENGTH_BANDS[LENGTH_BANDS.length - 1])} parole`;
+  return `Da ${words(LENGTH_BANDS[band - 1])} a ${words(LENGTH_BANDS[band])} parole`;
+}
+
+/**
+ * Cosa pesa nei suggerimenti, dal profilo gia' costruito (nessun segnale nuovo): autori e tag
+ * graditi, autori/tag/lunghezza che pesano contro. `bookIds`: i libri che hanno fatto pesare la voce.
+ */
+function computeTaste(corpus: Corpus, signalBooks: BookMeta[]): RecommendationsResult['taste'] {
+  const profile = buildProfile(corpus, signalBooks);
+  const ids = (holders: ProfileItem[], liked: boolean) =>
+    [...holders]
+      .filter((item) => (liked ? item.like > 0 : item.like < 0))
+      .sort((a, b) => (liked ? b.like - a.like : a.like - b.like))
+      .slice(0, TASTE_BOOK_IDS)
+      .map((item) => item.book.id);
+  const tagOk = (key: string, label: string) =>
+    corpus.share(key) <= REASON_TAG_MAX_SHARE && !REASON_SKIP_TAGS.has(norm(label));
+  // Stesse regole della pulizia dei tag: niente «Serie:…», sinonimi al nome canonico, un'etichetta una volta sola.
+  const shown = new Set<string>();
+  const cleanLabel = (label: string): string | null => {
+    const clean = cleanIncomingTags([label])[0];
+    if (!clean || shown.has(norm(clean))) return null;
+    shown.add(norm(clean));
+    return clean;
+  };
+  const labelOf = (stat: FeatureStat, pick: (item: ProfileItem) => Map<string, string>, key: string) =>
+    pick(stat.holders[0]).get(key) ?? key;
+
+  const liked: TasteItem[] = [];
+  const authorsLiked = [...profile.authors]
+    .filter(([, stat]) => stat.weight > 0 && stat.holders.some((item) => item.like >= REASON_BOOK_MIN_LIKE))
+    .sort((a, b) => b[1].weight - a[1].weight)
+    .slice(0, TASTE_LIKED_AUTHORS);
+  for (const [key, stat] of authorsLiked) {
+    liked.push({ kind: 'author', label: labelOf(stat, (item) => item.features.authors, key), bookIds: ids(stat.holders, true) });
+  }
+  const tagsLiked = [...profile.tags]
+    .map(([key, stat]) => ({ key, stat, label: labelOf(stat, (item) => item.features.tags, key) }))
+    .filter(({ key, stat, label }) => stat.weight > 0 && stat.holders.length >= TASTE_MIN_BOOKS && tagOk(key, label))
+    .sort((a, b) => b.stat.weight * corpus.idf(b.key) - a.stat.weight * corpus.idf(a.key));
+  for (const { stat, label } of tagsLiked) {
+    if (liked.filter((item) => item.kind === 'tag').length >= TASTE_LIKED_TAGS) break;
+    const clean = cleanLabel(label);
+    if (clean) liked.push({ kind: 'tag', label: clean, bookIds: ids(stat.holders, true) });
+  }
+
+  const against: { value: number; item: TasteItem }[] = [];
+  for (const [key, stat] of profile.authors) {
+    if (stat.weight >= 0 || stat.holders.filter((item) => item.like < 0).length < TASTE_MIN_BOOKS) continue;
+    against.push({
+      value: stat.weight,
+      item: { kind: 'author', label: labelOf(stat, (item) => item.features.authors, key), bookIds: ids(stat.holders, false) },
+    });
+  }
+  for (const [key, stat] of profile.tags) {
+    const label = labelOf(stat, (item) => item.features.tags, key);
+    if (stat.weight >= 0 || stat.holders.filter((item) => item.like < 0).length < TASTE_MIN_BOOKS || !tagOk(key, label)) continue;
+    const clean = cleanLabel(label);
+    if (!clean) continue;
+    against.push({ value: stat.weight * corpus.idf(key), item: { kind: 'tag', label: clean, bookIds: ids(stat.holders, false) } });
+  }
+  const disliked = against
+    .sort((a, b) => a.value - b.value)
+    .slice(0, TASTE_DISLIKED)
+    .map((entry) => entry.item);
+
+  // La fascia di lunghezza con piu' abbandoni rispetto alla media.
+  let worst: { band: number; rate: number } | null = null;
+  for (const [band, [done, dropped]] of profile.bands) {
+    if (done + dropped < TASTE_BAND_MIN_BOOKS) continue;
+    const rate = dropped / (done + dropped);
+    if (rate < profile.baseAbandonRate + TASTE_BAND_MIN_EXCESS) continue;
+    if (!worst || rate > worst.rate) worst = { band, rate };
+  }
+  if (worst) {
+    const dropped = signalBooks
+      .filter((book) => book.readingStatus === 'dnf' && corpus.features.get(book.id)?.band === worst!.band)
+      .slice(0, TASTE_BOOK_IDS)
+      .map((book) => book.id);
+    disliked.push({ kind: 'length', label: bandLabel(worst.band), bookIds: dropped });
+  }
+  return { liked, disliked };
+}
+
 /* ------------------------------------------------------------ risultato -- */
 
 export interface RecommendationOptions {
@@ -825,20 +955,13 @@ export function computeRecommendations(
     .filter((book) => book.recommendationDismissed && book.readingStatus === 'unread')
     .map((book) => book.id);
   if (signalBooks.length < MIN_SIGNAL_BOOKS) {
-    return { enough: false, seriesNext: [], booksByAuthor: [], booksToExplore: [], fanfics: [], dismissed, basedOn };
+    return { enough: false, taste: { liked: [], disliked: [] }, seriesNext: [], booksByAuthor: [], booksToExplore: [], fanfics: [], dismissed, basedOn };
   }
 
   const isCandidate = (book: BookMeta) =>
     book.readingStatus === 'unread' && !book.readingProgress && !book.recommendationDismissed;
 
-  const bySeries = new Map<string, BookMeta[]>();
-  for (const book of books) {
-    const key = seriesKey(book);
-    if (!key) continue;
-    const list = bySeries.get(key) ?? [];
-    list.push(book);
-    bySeries.set(key, list);
-  }
+  const bySeries = groupBySeries(books);
 
   const seriesNext = seriesNextPicks(bySeries, isCandidate);
   const taken = new Set(seriesNext.map((entry) => entry.id));
@@ -848,12 +971,8 @@ export function computeRecommendations(
   const eligible = (book: BookMeta): boolean => {
     const key = seriesKey(book);
     if (!key) return true;
-    const volumes = bySeries.get(key) ?? [];
-    if (volumes.some(isRead)) return false;
-    const pending = volumes.filter((volume) => !isRead(volume));
-    const indexes = pending.map((volume) => volume.seriesIndex).filter((index): index is number => index !== null);
-    if (book.seriesIndex === null) return indexes.length === 0;
-    return book.seriesIndex === Math.min(...indexes);
+    if ((bySeries.get(key) ?? []).some(isRead)) return false;
+    return isLowestUnreadVolume(book, bySeries);
   };
 
   const candidates = books.filter((book) => isCandidate(book) && !taken.has(book.id) && eligible(book));
@@ -900,6 +1019,7 @@ export function computeRecommendations(
 
   return {
     enough: true,
+    taste: computeTaste(corpus, signalBooks),
     seriesNext: seriesNext.slice(0, limit),
     booksByAuthor,
     booksToExplore,

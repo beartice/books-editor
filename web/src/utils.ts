@@ -159,3 +159,22 @@ export function releaseDateKey(value: string | null | undefined): string {
   const year = /\b(\d{4})\b/.exec(text);
   return year ? `${year[1]}-00-00` : '￿';
 }
+
+/** Codice lingua ISO 639-1 («en», «it») da codici a due o tre lettere o da «en-US»; '' se non riconosciuto. */
+export function languageCode(value: string | null | undefined): string {
+  const code = (value ?? '').trim().toLowerCase().split(/[-_]/)[0] ?? '';
+  if (/^[a-z]{2}$/.test(code)) return code;
+  const map: Record<string, string> = {
+    ita: 'it', eng: 'en', ger: 'de', deu: 'de', fre: 'fr', fra: 'fr', spa: 'es', por: 'pt',
+    dut: 'nl', nld: 'nl', jpn: 'ja', rus: 'ru', chi: 'zh', zho: 'zh', pol: 'pl', swe: 'sv',
+    dan: 'da', nor: 'no', fin: 'fi', tur: 'tr', gre: 'el', ell: 'el',
+  };
+  return map[code] ?? '';
+}
+
+/** Nome italiano del mese da «AAAA-MM» («novembre»). */
+export function monthName(month: string): string {
+  const [year, number] = month.split('-').map(Number);
+  if (!year || !number) return month;
+  return new Date(year, number - 1, 1).toLocaleDateString('it-IT', { month: 'long' });
+}
