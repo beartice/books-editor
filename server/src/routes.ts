@@ -77,6 +77,12 @@ import {
 } from './fanficUpdates.js';
 import { getJellyfinInfo, listJellyfinLibraries } from './jellyfin.js';
 import {
+  TagCleanupError,
+  applyTagCleanup,
+  currentTagCleanupPlan,
+  undoLastTagCleanup,
+} from './tagCleanup.js';
+import {
   computeRecommendations,
   DEFAULT_RECOMMENDATION_LIMIT,
   MAX_RECOMMENDATION_LIMIT,
@@ -84,6 +90,7 @@ import {
 import { getJellyfinSyncState, pushBookNow, startJellyfinSync } from './jellyfinSync.js';
 import type { DuplicateMatch, PreparedImport } from './library.js';
 import { HIGHLIGHT_COLORS, READING_STATUSES } from '../../shared/types.js';
+import type { TagCleanupSelection } from '../../shared/types.js';
 import type { AppSettings, BookHighlight, BookMeta, HighlightColor, MetadataCandidate, ReadingStatus } from '../../shared/types.js';
 
 const COVER_MIME: Record<string, string> = {
@@ -1465,6 +1472,43 @@ export async function registerApi(app: FastifyInstance): Promise<void> {
   );
 
   app.get('/api/stats', async () => statsFor(visibleBooks(currentLibrary(), await loadIndex())));
+
+  /* ------------------------------------------------- pulizia dei tag -- */
+  /** Proposta di pulizia dei tag dei libri (non scrive nulla) e ultima pulizia applicata. */
+  app.get('/api/tags/cleanup', async () => currentTagCleanupPlan());
+
+  app.post<{ Body: { groups?: unknown } | undefined }>('/api/tags/cleanup', async (request, reply) => {
+    const groups = request.body?.groups;
+    const valid =
+      Array.isArray(groups) &&
+      groups.length > 0 &&
+      groups.every(
+        (item) =>
+          item &&
+          typeof item === 'object' &&
+          typeof (item as { id?: unknown }).id === 'string' &&
+          ((item as { canonical?: unknown }).canonical === undefined ||
+            typeof (item as { canonical?: unknown }).canonical === 'string'),
+      );
+    if (!valid) {
+      return reply.code(400).send({ error: 'Indica i gruppi da applicare: groups: [{ id, canonical? }]' });
+    }
+    try {
+      return await applyTagCleanup(groups as TagCleanupSelection[]);
+    } catch (error) {
+      if (error instanceof TagCleanupError) return reply.code(400).send({ error: error.message });
+      throw error;
+    }
+  });
+
+  app.post('/api/tags/cleanup/undo', async (_request, reply) => {
+    try {
+      return await undoLastTagCleanup();
+    } catch (error) {
+      if (error instanceof TagCleanupError) return reply.code(404).send({ error: error.message });
+      throw error;
+    }
+  });
 
   /** «Cosa leggere dopo»: suggerimenti fra i libri non letti della libreria aperta (nessun servizio esterno). */
   app.get<{ Querystring: { limit?: string } }>('/api/recommendations', async (request, reply) => {

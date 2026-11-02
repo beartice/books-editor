@@ -7,6 +7,7 @@ import { appleBridge, desktop, importAppleBooksViaApp, setAppleAutoSync, unwrap 
 import { IconClose, IconFolder, IconLogout } from './icons';
 import FanficSettingsSection from './FanficSettingsSection';
 import Ao3AccountSection from './Ao3AccountSection';
+import TagCleanupSection from './TagCleanupSection';
 import JellyfinSyncSection from './JellyfinSyncSection';
 
 interface Props {
@@ -436,6 +437,8 @@ export default function SettingsDialog({ onClose }: Props) {
           <Ao3AccountSection />
 
           <FanficSettingsSection />
+
+          <TagCleanupSection />
 
           {/* Su Windows (app desktop) Apple Books non esiste: la sezione non compare. */}
           {!(desktop() && !appleBridge()) && (

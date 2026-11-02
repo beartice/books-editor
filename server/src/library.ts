@@ -18,6 +18,7 @@ import { localDayOf, recordReadingDays, type ReadingEvent } from './readingLog.j
 import { htmlToText } from './htmlText.js';
 import { detectLanguage, toIso6391 } from './language.js';
 import { normalizeTags } from './tags.js';
+import { cleanIncomingTags } from './tagRules.js';
 import { convertToReadable, isConvertible } from './convert.js';
 import { lookupOnline, pickBestCandidate } from './providers/index.js';
 import type { BookEdition, BookMeta, BookSummary, MetadataCandidate, ScanResult } from '../../shared/types.js';
@@ -245,7 +246,8 @@ export function buildMetaFromInfo(
     if (fanfic.words) fields.wordCount = fanfic.words;
     if (fanfic.chapters) fields.chapters = fanfic.chapters;
   } else if (info.subjects.length) {
-    fields.tags = normalizeTags(info.subjects).slice(0, 30);
+    // Libri: i tag in ingresso arrivano gia' puliti (stesse regole della pulizia della libreria).
+    fields.tags = cleanIncomingTags(normalizeTags(info.subjects)).slice(0, 30);
   }
 
   return fields;
@@ -1029,6 +1031,10 @@ export async function applyCandidate(
       if (!empty) continue;
     }
     (patch as Record<string, unknown>)[key] = value;
+  }
+  // Tag dei libri da un risultato online: stesse regole della pulizia (le fanfic restano com'e').
+  if (Array.isArray(patch.tags) && current?.kind === 'book') {
+    patch.tags = cleanIncomingTags(normalizeTags(patch.tags));
   }
 
   if (candidate.coverUrl && (!current?.coverFile || !onlyEmpty)) {

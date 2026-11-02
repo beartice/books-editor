@@ -803,3 +803,43 @@ export interface RecommendationsResult {
   dismissed: string[];
   basedOn: { read: number; rated: number; abandoned: number; favorites: number };
 }
+
+/** Una grafia di un tag e in quanti libri compare. */
+export interface TagVariant {
+  tag: string;
+  count: number;
+}
+
+/** Un gruppo della proposta di pulizia dei tag: da unire in un canonico o da togliere. */
+export interface TagCleanupGroup {
+  /** Stabile fra due analisi della stessa libreria. */
+  id: string;
+  kind: 'merge' | 'remove';
+  /** Nome finale (solo `merge`; vuoto per `remove`). */
+  canonical: string;
+  /** Motivo (solo `remove`). */
+  label: string;
+  variants: TagVariant[];
+  bookIds: string[];
+  defaultSelected: boolean;
+}
+
+/** Ultima pulizia applicata (per «Annulla»). */
+export interface TagCleanupLast {
+  at: string;
+  books: number;
+  undone: boolean;
+}
+
+export interface TagCleanupPlan {
+  groups: TagCleanupGroup[];
+  /** Con le scelte predefinite: libri toccati e tag distinti prima e dopo. */
+  totals: { books: number; tagsBefore: number; tagsAfter: number };
+  lastCleanup: TagCleanupLast | null;
+}
+
+/** Gruppo scelto, con il nome finale eventualmente rinominato (solo `merge`). */
+export interface TagCleanupSelection {
+  id: string;
+  canonical?: string;
+}

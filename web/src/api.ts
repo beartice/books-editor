@@ -16,6 +16,8 @@ import type {
   LibraryStats,
   ReadingStats,
   RecommendationsResult,
+  TagCleanupPlan,
+  TagCleanupSelection,
   LibrarySummary,
   LookupResult,
   MetadataCandidate,
@@ -235,6 +237,15 @@ export const api = {
   books: () => request<{ books: BookSummary[]; stats: LibraryStats }>('/books'),
   /** Statistiche di lettura: un anno (AAAA) oppure `all`. */
   readingStats: (year: number | 'all') => request<ReadingStats>(`/stats/reading?year=${year}`),
+  /** Pulizia dei tag dei libri: proposta (non scrive), applicazione e annullamento. */
+  tagCleanupPlan: () => request<TagCleanupPlan>('/tags/cleanup'),
+  applyTagCleanup: (groups: TagCleanupSelection[]) =>
+    request<{ books: number; backup: string }>('/tags/cleanup', {
+      method: 'POST',
+      body: JSON.stringify({ groups }),
+    }),
+  undoTagCleanup: () =>
+    request<{ restored: number; skipped: number }>('/tags/cleanup/undo', { method: 'POST' }),
   /** «Cosa leggere dopo»: suggerimenti fra i libri non letti. */
   recommendations: () => request<RecommendationsResult>('/recommendations'),
   /** Nasconde (o ripristina) un libro dai suggerimenti. */
