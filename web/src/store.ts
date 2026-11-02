@@ -23,6 +23,8 @@ import type {
 } from '@shared/types';
 
 export interface Filters {
+  /** Solo i libri con una recensione (note personali). */
+  withNotes: boolean;
   kinds: string[];
   formats: string[];
   authors: string[];
@@ -42,6 +44,7 @@ export interface Filters {
 }
 
 export const EMPTY_FILTERS: Filters = {
+  withNotes: false,
   kinds: [],
   formats: [],
   authors: [],
@@ -152,6 +155,7 @@ export function matchesQuickFilter(filters: Filters, quick: QuickFilter): boolea
         filters.readingStatus.length === 0 &&
         !filters.favoritesOnly &&
         !filters.missingCover &&
+        !filters.withNotes &&
         !filters.missingMetadata &&
         !filters.updatesOnly
       );
@@ -163,6 +167,7 @@ export function matchesQuickFilter(filters: Filters, quick: QuickFilter): boolea
         filters.readingStatus.length === 0 &&
         !filters.favoritesOnly &&
         !filters.missingCover &&
+        !filters.withNotes &&
         !filters.missingMetadata &&
         !filters.updatesOnly
       );
@@ -174,6 +179,7 @@ export function matchesQuickFilter(filters: Filters, quick: QuickFilter): boolea
         filters.readingStatus.length === 0 &&
         !filters.favoritesOnly &&
         !filters.missingCover &&
+        !filters.withNotes &&
         !filters.missingMetadata &&
         !filters.updatesOnly
       );
@@ -184,6 +190,7 @@ export function matchesQuickFilter(filters: Filters, quick: QuickFilter): boolea
         filters.readingStatus.length === 0 &&
         filters.favoritesOnly &&
         !filters.missingCover &&
+        !filters.withNotes &&
         !filters.missingMetadata &&
         !filters.updatesOnly
       );
@@ -195,6 +202,7 @@ export function matchesQuickFilter(filters: Filters, quick: QuickFilter): boolea
         filters.readingStatus[0] === 'unread' &&
         !filters.favoritesOnly &&
         !filters.missingCover &&
+        !filters.withNotes &&
         !filters.missingMetadata &&
         !filters.updatesOnly
       );
@@ -205,6 +213,7 @@ export function matchesQuickFilter(filters: Filters, quick: QuickFilter): boolea
         filters.readingStatus.length === 0 &&
         !filters.favoritesOnly &&
         !filters.missingCover &&
+        !filters.withNotes &&
         !filters.missingMetadata &&
         filters.updatesOnly
       );
@@ -326,6 +335,12 @@ interface State {
 }
 
 let toastId = 0;
+
+/** Controllo prima di lasciare la scheda aperta: false = resta (recensione non salvata). */
+let leaveGuard: (() => Promise<boolean>) | null = null;
+export function setLeaveGuard(guard: (() => Promise<boolean>) | null): void {
+  leaveGuard = guard;
+}
 // Funzioni di risoluzione delle notifiche con azioni (fuori dallo stato).
 const toastResolvers = new Map<number, (value: string | null) => void>();
 
@@ -339,6 +354,7 @@ function matchesFilters(book: BookSummary, filters: Filters): boolean {
   if (filters.readingStatus.length && !filters.readingStatus.includes(book.readingStatus)) return false;
   if (filters.favoritesOnly && !book.favorite) return false;
   if (filters.missingCover && book.coverFile) return false;
+  if (filters.withNotes && !book.hasNotes) return false;
   if (filters.missingMetadata && book.authors.length && book.description) return false;
   if (filters.updatesOnly && !isFanficUpdateAvailable(book.fanficUpdate)) return false;
   if (filters.ids.length && !idSetOf(filters.ids).has(book.id)) return false;
@@ -659,6 +675,8 @@ export const useStore = create<State>((set, get) => ({
   clearFilters: () => set({ filters: { ...EMPTY_FILTERS }, query: '' }),
 
   select: async (id) => {
+    // Cambiare libro o chiudere la scheda con una recensione non salvata chiede conferma.
+    if (leaveGuard && id !== get().selectedId && !(await leaveGuard())) return;
     const url = new URL(window.location.href);
     if (id) url.searchParams.set('book', id);
     else url.searchParams.delete('book');

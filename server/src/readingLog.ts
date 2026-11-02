@@ -121,6 +121,13 @@ export async function rebuildReadingLog(
   return log;
 }
 
+/** Quanti giorni distinti di lettura ha il libro nel registro. */
+export function readingDaysOf(log: ReadingLog, bookId: string): number {
+  let days = 0;
+  for (const books of Object.values(log.days)) if (books[bookId]) days += 1;
+  return days;
+}
+
 /** Il registro della libreria; se il file manca lo ricostruisce dalle schede. */
 export async function ensureReadingLog(
   books: BookMeta[],

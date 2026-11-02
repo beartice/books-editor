@@ -245,6 +245,13 @@ export interface BookMeta {
   dateStarted?: string | null;
   /** Date di Apple Books per questo libro (ISO 8601, vuote se assenti). Gestito solo dal server. */
   appleDates?: AppleDates;
+  /**
+   * Quando le note personali (`notes`, la recensione) sono cambiate per l'ultima volta (ISO 8601);
+   * null se vuote. Gestito solo dal server: non si modifica via PATCH.
+   */
+  notesUpdatedAt?: string | null;
+  /** Giorni distinti di lettura registrati per il libro. Solo nella risposta di GET /api/books/:id: mai in book.json. */
+  readingDays?: number;
 
   dateAdded: string;
   dateModified: string;
@@ -265,6 +272,12 @@ export interface AppleDates {
   firstOpenedAt: string;
   /** Ultimo utilizzo del libro. */
   lastEngagedAt: string;
+  /** Ultima apertura in Apple Books (ISO 8601). Assente nei valori salvati dalle versioni vecchie. */
+  lastOpenedAt?: string;
+  /** Data di fine lettura secondo Apple Books (AAAA-MM-GG), vuota se non finito. Assente nei valori vecchi. */
+  finishedAt?: string;
+  /** Avanzamento in percentuale secondo Apple Books. Assente nei valori vecchi. */
+  progress?: number | null;
 }
 
 /** Formati che il server sa convertire in EPUB/PDF all'import, secondo gli strumenti installati. */
@@ -304,6 +317,8 @@ export interface BookSummary {
   dateFinished: string | null;
   dateStarted?: string | null;
   favorite: boolean;
+  /** Le note personali non sono vuote (il testo non viaggia nell'elenco). */
+  hasNotes: boolean;
   publisher: string;
   language: string;
   description: string;

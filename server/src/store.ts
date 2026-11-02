@@ -171,6 +171,7 @@ export function toSummary(book: BookMeta): BookSummary {
     dateFinished: book.dateFinished,
     dateStarted: book.dateStarted ?? null,
     favorite: book.favorite,
+    hasNotes: Boolean((book.notes ?? '').trim()),
     publisher: book.publisher,
     language: book.language,
     description: book.description,

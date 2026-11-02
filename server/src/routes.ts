@@ -60,7 +60,7 @@ import { getCoverThumbnail, removeCoverThumbnails } from './thumbnails.js';
 import { lookupSeries, readCachedSeries } from './providers/series.js';
 import { readSeriesTotals, writeSeriesTotal } from './seriesCache.js';
 import { computeReadingStats, localDay } from './readingStats.js';
-import { ensureReadingLog, recordReadingDays } from './readingLog.js';
+import { ensureReadingLog, readingDaysOf, recordReadingDays } from './readingLog.js';
 import { compareLocations, importAppleBooks, importAppleBooksFromRows, syncAppleBooksForBooks } from './appleBooks.js';
 import { AppleBooksInputError, parseAppleBooksInput } from './appleBooksInput.js';
 import { buildEpubWithMetadata, writeEpubMetadata } from './epubWrite.js';
@@ -483,7 +483,9 @@ export async function registerApi(app: FastifyInstance): Promise<void> {
   app.get<{ Params: { id: string } }>('/api/books/:id', async (request, reply) => {
     const book = await getBookMeta(request.params.id);
     if (!book) return reply.code(404).send({ error: 'Libro non trovato' });
-    return book;
+    // Calcolato qui, mai salvato in book.json: i giorni di lettura registrati per questo libro.
+    const log = await ensureReadingLog(await loadIndex());
+    return { ...book, readingDays: readingDaysOf(log, book.id) };
   });
 
   app.patch<{ Params: { id: string }; Body: Partial<BookMeta> }>(
@@ -498,7 +500,19 @@ export async function registerApi(app: FastifyInstance): Promise<void> {
             allowed.readingProgressUpdatedAt = new Date().toISOString();
           }
         }
-        const updated = await updateBook(request.params.id, allowed, 'manual');
+        // Data delle note (recensione): cambia solo se il testo cambia davvero, null se si svuotano.
+        let options: { clearSources?: string[] } = {};
+        if ('notes' in allowed) {
+          const current = await getBookMeta(request.params.id);
+          const before = current?.notes ?? '';
+          const after = typeof allowed.notes === 'string' ? allowed.notes : '';
+          if (current && before !== after) {
+            allowed.notesUpdatedAt = after.trim() ? new Date().toISOString() : null;
+            // Non e' un campo modificabile dall'utente: niente provenienza.
+            options = { clearSources: ['notesUpdatedAt'] };
+          }
+        }
+        const updated = await updateBook(request.params.id, allowed, 'manual', options);
         return updated;
       } catch (error) {
         return reply.code(404).send({ error: (error as Error).message });

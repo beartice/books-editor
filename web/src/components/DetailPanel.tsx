@@ -18,6 +18,8 @@ import FanficUpdateBox from './FanficUpdateBox';
 import HighlightsTab from './HighlightsTab';
 import LanguagesSection from './LanguagesSection';
 import MoveBookMenu from './MoveBookMenu';
+import ReviewCard from './ReviewCard';
+import AppleBooksCard from './AppleBooksCard';
 import AppleBooksDialog from './AppleBooksDialog';
 import { appleBridge, desktop, unwrap } from '../desktop';
 import {
@@ -381,7 +383,7 @@ export default function DetailPanel({
     {
       key: 'extra',
       title: 'Personale',
-      fields: ['tags', 'notes', 'readingStatus', 'readingProgress', 'dateStarted', 'dateFinished'],
+      fields: ['tags', 'readingStatus', 'readingProgress', 'dateStarted', 'dateFinished'],
     },
   ];
 
@@ -1026,6 +1028,10 @@ export default function DetailPanel({
                 </button>
               </div>
 
+              <ReviewCard meta={meta} commit={commit} />
+
+              <AppleBooksCard meta={meta} />
+
               {groups.map((group) => (
                 <section key={group.key}>
                   <h3 className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-ink-500">
@@ -1103,7 +1109,6 @@ export default function DetailPanel({
                             </FieldRow>
                           );
                         case 'description':
-                        case 'notes':
                           return (
                             <FieldRow key={field} label={label}>
                               <TextArea

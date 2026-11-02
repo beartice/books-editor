@@ -465,6 +465,21 @@ export default function Sidebar({
                   {books.filter((book) => !book.authors.length || !book.description).length}
                 </span>
               </button>
+              <button
+                onClick={() => setFlagFilter('withNotes', !filters.withNotes)}
+                className={cn(
+                  'flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-[12px] transition',
+                  filters.withNotes
+                    ? 'bg-accent-500/10 font-medium text-accent-700'
+                    : 'text-ink-400 hover:bg-black/[0.035] hover:text-ink-100',
+                )}
+              >
+                <IconBookmark className="h-3.5 w-3.5" />
+                Con recensione
+                <span className="ml-auto text-[10px] tabular-nums text-ink-500">
+                  {books.filter((book) => book.hasNotes).length}
+                </span>
+              </button>
             </Section>
           </div>
 

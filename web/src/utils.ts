@@ -48,6 +48,15 @@ export function formatDate(value: string | null | undefined): string {
   return date.toLocaleDateString('it-IT', { year: 'numeric', month: 'short', day: 'numeric' });
 }
 
+/** Data per esteso in italiano («2 novembre 2026») da AAAA-MM-GG o da una data ISO; '' se illeggibile. */
+export function formatDateLong(value: string | null | undefined): string {
+  if (!value) return '';
+  const day = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  const date = day ? new Date(Number(day[1]), Number(day[2]) - 1, Number(day[3])) : new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  return date.toLocaleDateString('it-IT', { year: 'numeric', month: 'long', day: 'numeric' });
+}
+
 export function relativeDate(value: string | null | undefined): string {
   if (!value) return '—';
   const date = new Date(value);

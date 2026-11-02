@@ -5,6 +5,7 @@ import { localDayOf, recordReadingDays, type ReadingEvent } from './readingLog.j
 import { readAppleBooksData } from './appleBooksRead.js';
 import type {
   AppleAnnotationRow,
+  AppleDates,
   AppleBooksImportResult,
   AppleBooksMatched,
   AppleBooksRawData,
@@ -489,12 +490,28 @@ export async function importAppleBooksFromRows(
       }
     }
     // Le date di Apple si conservano nella scheda (aggiunta alla libreria, prima apertura).
-    const appleDates = {
+    // Fine e avanzamento di Apple valgono solo se il titolo corrisponde (come per la scheda).
+    const appleDates: AppleDates = {
       addedAt: apple.addedAt,
       firstOpenedAt: apple.firstOpenedAt,
       lastEngagedAt: apple.lastEngagedAt,
+      lastOpenedAt: apple.lastOpenedAt,
+      finishedAt: titleRank > 0 ? apple.finishedAt : '',
+      progress: titleRank > 0 ? apple.readingProgress : null,
     };
-    if (JSON.stringify(book.appleDates ?? null) !== JSON.stringify(appleDates)) {
+    // Confronto con i campi nuovi letti come vuoti nei valori salvati dalle versioni vecchie.
+    const stored = book.appleDates;
+    const storedDates = stored
+      ? {
+          addedAt: stored.addedAt,
+          firstOpenedAt: stored.firstOpenedAt,
+          lastEngagedAt: stored.lastEngagedAt,
+          lastOpenedAt: stored.lastOpenedAt ?? '',
+          finishedAt: stored.finishedAt ?? '',
+          progress: stored.progress ?? null,
+        }
+      : null;
+    if (JSON.stringify(storedDates) !== JSON.stringify(appleDates)) {
       patch.appleDates = appleDates;
     }
     // L'inizio segue le stesse regole della data di fine; quello scritto a mano non si tocca.
@@ -505,8 +522,7 @@ export async function importAppleBooksFromRows(
         startedDates += 1;
       }
     }
-    const changed =
-      patch.appleDates !== undefined ||
+    const otherChange =
       patch.dateStarted !== undefined ||
       !sameHighlights(book.highlights ?? [], next) ||
       book.identifiers?.applebooks !== apple.assetId ||
@@ -516,9 +532,20 @@ export async function importAppleBooksFromRows(
       (patch.readingProgressUpdatedAt !== undefined &&
         (book.readingProgressUpdatedAt ?? null) !== patch.readingProgressUpdatedAt) ||
       (patch.readingStatus !== undefined && book.readingStatus !== patch.readingStatus);
+    const changed = patch.appleDates !== undefined || otherChange;
 
     if (changed && !options.dryRun) {
-      await updateBook(book.id, patch, 'online');
+      if (otherChange) {
+        await updateBook(book.id, patch, 'online');
+      } else {
+        // Cambiano solo le date di Apple: nessun segno di modifica (`dateModified`), nessun invio a
+        // Jellyfin, nessuna provenienza. Il primo giro dopo il rilascio le riscrive per molti libri.
+        await updateBook(book.id, { appleDates: patch.appleDates }, 'online', {
+          touch: false,
+          // La provenienza resta com'e' (di solito «online», scritta dai giri precedenti); se non c'era non la crea.
+          clearSources: book.fieldSource?.appleDates ? [] : ['appleDates'],
+        });
+      }
     }
 
     // Apple tiene solo l'ultima data: il registro conserva i giorni gia' visti.
