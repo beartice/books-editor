@@ -14,6 +14,7 @@ import {
   IconSearch,
   IconSettings,
 } from './icons';
+import RecommendationsStrip from './RecommendationsStrip';
 
 interface Props {
   onOpenImport: () => void;
@@ -272,6 +273,8 @@ export default function TopBar({
             </div>
           </div>
         </div>
+
+        <RecommendationsStrip />
       </div>
     </header>
   );

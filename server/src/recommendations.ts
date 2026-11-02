@@ -181,8 +181,26 @@ function norm(value: string): string {
     .trim();
 }
 
+/** Autori che non identificano una persona: due opere «Anonymous» non sono dello stesso autore. */
+const ANONYMOUS_AUTHORS = new Set([
+  'unknown',
+  'sconosciuto',
+  'autore sconosciuto',
+  'anonymous',
+  'anonimo',
+  'anon',
+  'orphan_account',
+  'orphan account',
+]);
+
+function isAnonymousAuthor(key: string): boolean {
+  return ANONYMOUS_AUTHORS.has(key);
+}
+
+/** Primo autore riconoscibile ('' se manca o e' anonimo: nessun limite per autore). */
 function firstAuthor(book: BookMeta): string {
-  return norm((book.authors ?? [])[0] ?? '');
+  const key = norm((book.authors ?? [])[0] ?? '');
+  return isAnonymousAuthor(key) ? '' : key;
 }
 
 function seriesKey(book: BookMeta): string {
@@ -237,7 +255,7 @@ function extractFeatures(book: BookMeta): Features {
   const authors = new Map<string, string>();
   for (const author of book.authors ?? []) {
     const key = norm(author ?? '');
-    if (key && key !== 'unknown' && key !== 'sconosciuto') authors.set(`a:${key}`, author.trim());
+    if (key && !isAnonymousAuthor(key)) authors.set(`a:${key}`, author.trim());
   }
 
   const tags = new Map<string, string>();

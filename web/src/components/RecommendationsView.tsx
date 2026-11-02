@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { BookRecommendation, BookSummary, RecommendationsResult } from '@shared/types';
+import type { BookRecommendation, BookSummary } from '@shared/types';
 import { api } from '../api';
 import { useStore } from '../store';
+import { useRecommendations } from '../useRecommendations';
 import BookCover from './BookCover';
 import { IconAlert, IconClose } from './icons';
 
@@ -23,49 +24,6 @@ const pillClass = (active: boolean) =>
   `min-h-10 shrink-0 rounded-full px-4 text-[13px] transition ${
     active ? 'bg-accent-600 font-semibold text-white' : 'text-ink-200 hover:bg-black/[0.04]'
   }`;
-
-/**
- * Carica i suggerimenti: li ricarica al cambio libreria, a ogni richiesta (`attempt`) e quando
- * si chiude la scheda di un libro (lo stato potrebbe essere cambiato). Durante la ricarica
- * l'elenco precedente resta visibile.
- */
-function useRecommendations() {
-  const libraryId = useStore((state) => state.libraryId);
-  const selectedId = useStore((state) => state.selectedId);
-  const [data, setData] = useState<RecommendationsResult | null>(null);
-  const [error, setError] = useState('');
-  const [attempt, setAttempt] = useState(0);
-  const previousSelected = useRef(selectedId);
-
-  useEffect(() => {
-    if (previousSelected.current && !selectedId) setAttempt((value) => value + 1);
-    previousSelected.current = selectedId;
-  }, [selectedId]);
-
-  useEffect(() => {
-    let cancelled = false;
-    setError('');
-    api
-      .recommendations()
-      .then((result) => {
-        if (!cancelled) setData(result);
-      })
-      .catch((failure) => {
-        if (!cancelled) setError((failure as Error).message || 'Impossibile leggere i suggerimenti');
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [libraryId, attempt]);
-
-  // Cambio libreria: i suggerimenti dell'altra non servono piu'.
-  useEffect(() => {
-    setData(null);
-  }, [libraryId]);
-
-  const reload = useCallback(() => setAttempt((value) => value + 1), []);
-  return { data, error, reload };
-}
 
 function authorsOf(book: BookSummary): string {
   return book.authors.join(', ') || 'Autore sconosciuto';
